@@ -230,10 +230,13 @@ static async Task<SixLabors.ImageSharp.Image> GenerateOpenStreetMapTilesImageAsy
     using var httpClient = new HttpClient();
     httpClient.DefaultRequestHeaders.Add("User-Agent", "Smapshot/1.0 MapGenerator");
 
+    // Tile cache directory
+    string cacheRoot = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "tiles_cache");
+    Directory.CreateDirectory(cacheRoot);
+
     string tileUrlTemplate;
     switch (mapStyle.ToLower())
     {
-        // Same map style cases as before
         case "cycle":
             tileUrlTemplate = "https://a.tile-cyclosm.openstreetmap.fr/cyclosm/{0}/{1}/{2}.png";
             Console.WriteLine("Using CyclOSM map style with enhanced road details");
@@ -257,54 +260,87 @@ static async Task<SixLabors.ImageSharp.Image> GenerateOpenStreetMapTilesImageAsy
             break;
     }
 
-    // Download tiles (same as before)
-    var downloadTasks = new List<Task>();
     var tileImages = new Dictionary<(int, int), SixLabors.ImageSharp.Image>();
     var sem = new SemaphoreSlim(4);
-
-    for (int x = minTileX; x <= maxTileX; x++)
+    // Step 1: Try to load all tiles from cache in parallel
+    var missingTiles = new List<(int x, int y, int zoom, string cachePath)>();
+    Parallel.For(minTileX, maxTileX + 1, x =>
     {
         for (int y = minTileY; y <= maxTileY; y++)
         {
             int tileX = x;
             int tileY = y;
-
-            var downloadTask = Task.Run(async () =>
+            int tileZoom = downloadZoom;
+            string zoomFolder = Path.Combine(cacheRoot, tileZoom.ToString());
+            Directory.CreateDirectory(zoomFolder);
+            string cachePath = Path.Combine(zoomFolder, $"{tileX}_{tileY}.png");
+            if (File.Exists(cachePath))
             {
-                await sem.WaitAsync();
                 try
                 {
-                    var tileUrl = string.Format(tileUrlTemplate, downloadZoom, tileX, tileY);
-                    Console.WriteLine($"Downloading tile: {tileUrl}");
-
-                    try
+                    var imageBytes = File.ReadAllBytes(cachePath);
+                    using var ms = new MemoryStream(imageBytes);
+                    var tileImage = SixLabors.ImageSharp.Image.Load(ms);
+                    lock (tileImages)
                     {
-                        var tileImageBytes = await httpClient.GetByteArrayAsync(tileUrl);
-                        using var tileImageStream = new MemoryStream(tileImageBytes);
-                        var tileImage = SixLabors.ImageSharp.Image.Load(tileImageStream);
-
-                        lock (tileImages)
-                        {
-                            tileImages[(tileX, tileY)] = tileImage;
-                        }
+                        tileImages[(tileX, tileY)] = tileImage;
                     }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"Error downloading tile {tileX},{tileY}: {ex.Message}");
-                    }
-
-                    await Task.Delay(200);
+                    Console.WriteLine($"Loaded tile from cache: {cachePath}");
                 }
-                finally
+                catch (Exception ex)
                 {
-                    sem.Release();
+                    Console.WriteLine($"Error loading cached tile {cachePath}: {ex.Message}");
+                    lock (missingTiles)
+                    {
+                        missingTiles.Add((tileX, tileY, tileZoom, cachePath));
+                    }
                 }
-            });
-
-            downloadTasks.Add(downloadTask);
+            }
+            else
+            {
+                lock (missingTiles)
+                {
+                    missingTiles.Add((tileX, tileY, tileZoom, cachePath));
+                }
+            }
         }
-    }
+    });
 
+    // Step 2: Download only missing tiles (with throttling)
+    var downloadTasks = new List<Task>();
+    foreach (var (tileX, tileY, tileZoom, cachePath) in missingTiles)
+    {
+        var downloadTask = Task.Run(async () =>
+        {
+            await sem.WaitAsync();
+            try
+            {
+                var tileUrl = string.Format(tileUrlTemplate, tileZoom, tileX, tileY);
+                Console.WriteLine($"Downloading tile: {tileUrl}");
+                try
+                {
+                    var tileImageBytes = await httpClient.GetByteArrayAsync(tileUrl);
+                    using var tileImageStream = new MemoryStream(tileImageBytes);
+                    var tileImage = SixLabors.ImageSharp.Image.Load(tileImageStream);
+                    tileImage.Save(cachePath);
+                    lock (tileImages)
+                    {
+                        tileImages[(tileX, tileY)] = tileImage;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error downloading tile {tileX},{tileY}: {ex.Message}");
+                }
+                await Task.Delay(200); // Only delay for downloads
+            }
+            finally
+            {
+                sem.Release();
+            }
+        });
+        downloadTasks.Add(downloadTask);
+    }
     await Task.WhenAll(downloadTasks);
 
     // Compose all tiles into the full image (same as before)
