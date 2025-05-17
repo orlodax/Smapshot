@@ -1,4 +1,3 @@
-using SharpKml.Dom;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
@@ -9,7 +8,7 @@ namespace Smapshot.Services;
 
 public class TileManager(BoundingBoxGeo boundingBox, BoundingBoxGeo expandedBoundingBox, string mapStyle, int tileSize)
 {
-    const int MaxTotalTiles = 400; // Increased from 64 to allow for larger area download
+    const int MaxTotalTiles = 144; // Increased from 64 to allow for larger area download
 
     readonly BoundingBoxGeo boundingBox = boundingBox;
     readonly BoundingBoxGeo expandedBoundingBox = expandedBoundingBox; // Expanded bounding box for tile download
@@ -20,11 +19,7 @@ public class TileManager(BoundingBoxGeo boundingBox, BoundingBoxGeo expandedBoun
 
     public async Task<Image<Rgba32>> GenerateTilesImageAsync()
     {
-        int baseZoom = CalculateOptimalZoomLevel();
-
-        // Use a higher zoom level for downloading the tiles (2 levels higher for larger labels)
-        Zoom = Math.Min(19, baseZoom + 2); // Two zoom levels higher, maximum 19
-        Console.WriteLine($"Base zoom level: {baseZoom}, downloading at zoom level: {Zoom}");
+        CalculateOptimalZoomLevel();
 
         // Convert expanded lat/lon to tile coordinates at the higher zoom level
         (int minTileX, int maxTileX, int minTileY, int maxTileY) = MapHelper.GetTileBounds(expandedBoundingBox, Zoom);
@@ -60,7 +55,7 @@ public class TileManager(BoundingBoxGeo boundingBox, BoundingBoxGeo expandedBoun
         return await DownloadAndComposeTilesAsync(fullWidth, fullHeight);
     }
 
-    int CalculateOptimalZoomLevel()
+    void CalculateOptimalZoomLevel()
     {
         // Use the larger of the two dimensions for zoom calculation
         double higherDimension = Math.Max(boundingBox.Height, boundingBox.Width);
@@ -73,14 +68,13 @@ public class TileManager(BoundingBoxGeo boundingBox, BoundingBoxGeo expandedBoun
         // Calculate zoom level based on degrees per pixel
         // At zoom level 0, one pixel is about 0.703125 degrees (180/256)
         double zoom = Math.Round(Math.Log(0.703125 / degreesPerPixel) / Math.Log(2));
+        Console.WriteLine($"Base zoom level: {zoom}");
 
         // Add a zoom bias to get more detail (+1 means one zoom level higher)
         double zoomBias = 1.0;
-        zoom += zoomBias;
+        Zoom = Math.Max(1, Math.Min(19, (int)Math.Round(zoom + zoomBias)));
 
-        // Round to an integer zoom level, clamping between reasonable bounds
-        // Increased max zoom from 18 to 19 for more detail in small areas
-        return Math.Max(1, Math.Min(19, (int)Math.Round(zoom)));
+        Console.WriteLine($"Base zoom level: {zoom}, downloading at zoom level: {Zoom}");
     }
 
     async Task<Image<Rgba32>> DownloadAndComposeTilesAsync(
