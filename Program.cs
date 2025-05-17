@@ -11,6 +11,7 @@ public static partial class Program
 
     public static async Task Main(string[] args)
     {
+
         try
         {
             ParseArgs(args);
@@ -23,16 +24,18 @@ public static partial class Program
                 return;
             }
 
-            string tempImagePath = await new MapGenerator(KmlProcessor.Coordinates, mapStyle)
-                .GenerateMapAsync();
+            await OsmSkiaRenderer.RenderBasicMapToPng("output.png", KmlProcessor.Coordinates);
 
-            if (string.IsNullOrEmpty(tempImagePath))
-            {
-                Console.WriteLine("Error: Could not generate map image");
-                return;
-            }
+            // string tempImagePath = await new MapGenerator(KmlProcessor.Coordinates, mapStyle)
+            //     .GenerateMapAsync();
 
-            PdfGenerator.Generate(kmlFilePath!, tempImagePath, outputPdfPath!);
+            // if (string.IsNullOrEmpty(tempImagePath))
+            // {
+            //     Console.WriteLine("Error: Could not generate map image");
+            //     return;
+            // }
+
+            // PdfGenerator.Generate(kmlFilePath!, tempImagePath, outputPdfPath!);
         }
         catch (Exception ex)
         {

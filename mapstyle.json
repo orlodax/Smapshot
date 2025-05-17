@@ -1,0 +1,53 @@
+{
+    "roadStyles": {
+        "motorway": {
+            "color": "#FF4500",
+            "width": 14.0,
+            "outlineColor": "#B22222"
+        },
+        "trunk": {
+            "color": "#FFA500",
+            "width": 14,
+            "outlineColor": "#B8860B"
+        },
+        "primary": {
+            "color": "#FFFF00",
+            "width": 12,
+            "outlineColor": "#CCCC00"
+        },
+        "secondary": {
+            "color": "#FFFFE0",
+            "width": 10,
+            "outlineColor": "#BDB76B"
+        },
+        "tertiary": {
+            "color": "#FFFFFF",
+            "width": 8,
+            "outlineColor": "#BCBCBC"
+        },
+        "residential": {
+            "color": "#FFFFFF",
+            "width": 3,
+            "outlineColor": "#BCBCBC"
+        },
+        "service": {
+            "color": "#FFFFFF",
+            "width": 3,
+            "outlineColor": "#BCBCBC"
+        },
+        "default": {
+            "color": "#FFFFFF",
+            "width": 3,
+            "outlineColor": "#BCBCBC"
+        }
+    },
+    "waterStyle": {
+        "color": "#B4DCFF"
+    },
+    "labelStyle": {
+        "fontSize": 28,
+        "color": "#000000"
+    },
+    "borderOffset": 10,
+    "backgroundColor": "#f1efe9"
+}
