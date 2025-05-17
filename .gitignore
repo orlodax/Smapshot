@@ -3,8 +3,11 @@
 ##
 ## Get latest from https://github.com/github/gitignore/blob/master/VisualStudio.gitignore
 
+.vscode/
 *.pdf
 *.kml
+*.jpg
+*.png
 
 # .NET specific
 *.userosscache
