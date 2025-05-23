@@ -7,7 +7,6 @@ using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
 using Smapshot.Helpers;
 using Smapshot.Models;
-using System.IO; // For Path operations
 
 namespace Smapshot.Services;
 
@@ -29,7 +28,7 @@ public class MapGenerator
             west: coordinates.Min(c => c.Longitude)
         );
         BoundingBoxGeo paddedBoundingBox = polygonBoundingBox.Pad(padding);
-        expandedBoundingBox = paddedBoundingBox.Pad(0.5);
+        expandedBoundingBox = paddedBoundingBox.Pad(0.3);
         Console.WriteLine($"Expanded bounding box: ({expandedBoundingBox.West},{expandedBoundingBox.South}) to ({expandedBoundingBox.East},{expandedBoundingBox.North})");
         tileManager = new(polygonBoundingBox, expandedBoundingBox, mapStyle, TileSize);
     }
@@ -117,13 +116,16 @@ public class MapGenerator
         var (Center, Width, Height, Angle) = ComputeMinimumBoundingRectangle(pixelPoints);
         float rectCenterX = Center.X;
         float rectCenterY = Center.Y;
-        float rectW = Width * 1.1f; // Add 10% margin (5% each side)
-        float rectH = Height * 1.1f;
+        float rectW = Width; // Add 10% margin (5% each side)
+        float rectH = Height;
 
         if (rectW >= rectH)
             rectH = rectW * 2400 / 3250;
         else
             rectW = rectH * 3250 / 2400;
+
+        rectW *= 1.1f; // Add 10% margin (5% each side)
+        rectH *= 1.1f;
 
         float rotationAngle = Angle;
         float radians = rotationAngle * (float)Math.PI / 180f;

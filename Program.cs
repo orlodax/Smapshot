@@ -48,12 +48,13 @@ public static partial class Program
         {
             Console.WriteLine("Usage: Smapshot <path-to-kml-file> [output-pdf-path] [--style=<map-style>]");
             Console.WriteLine("Example: Smapshot polygon.kml map.pdf --style=topo");
-            Console.WriteLine("\nAvailable map styles:");
+            Console.WriteLine("\nAvailable background map styles:");
             Console.WriteLine("  standard        - Default OpenStreetMap style (default)");
             Console.WriteLine("  cycle           - CyclOSM style with more road details");
             Console.WriteLine("  topo            - OpenTopoMap with elevation contours");
             Console.WriteLine("  carto-light     - OpenStreetMap Carto style");
             Console.WriteLine("  carto-dark      - OpenStreetMap Carto dark style");
+            Console.WriteLine("\nAdditional background map styles available with a Geoapify API key:");
             Console.WriteLine("  osm-bright      - Geoapify OSM Bright style");
             Console.WriteLine("  osm-liberty     - Geoapify OSM Liberty style");
             Console.WriteLine("  maptiler-3d     - Geoapify Maptiler 3D style");

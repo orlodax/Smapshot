@@ -8,7 +8,7 @@ namespace Smapshot.Services;
 
 public class TileManager(BoundingBoxGeo boundingBox, BoundingBoxGeo expandedBoundingBox, string mapStyle, int tileSize)
 {
-    const int MaxTotalTiles = 144; // Increased from 64 to allow for larger area download
+    const int MaxTotalTiles = 512; // Increased from 64 to allow for larger area download
 
     readonly BoundingBoxGeo boundingBox = boundingBox;
     readonly BoundingBoxGeo expandedBoundingBox = expandedBoundingBox; // Expanded bounding box for tile download
@@ -36,6 +36,7 @@ public class TileManager(BoundingBoxGeo boundingBox, BoundingBoxGeo expandedBoun
         {
             Zoom--;
 
+            Console.WriteLine($"Map requires {totalTiles} tiles at zoom level {Zoom}");
             Console.WriteLine($"Reducing zoom level to {Zoom} to limit tile count");
 
             // Recalculate tile coordinates with new zoom
