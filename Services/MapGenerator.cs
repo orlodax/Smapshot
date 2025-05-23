@@ -1,41 +1,36 @@
 using System.Data;
-using SharpKml.Dom;
+using SharpKml.Dom; // For KML Point, if used elsewhere
 using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Drawing;
 using SixLabors.ImageSharp.Drawing.Processing;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Processing;
 using Smapshot.Helpers;
 using Smapshot.Models;
+using System.IO; // For Path operations
 
 namespace Smapshot.Services;
 
 public class MapGenerator
 {
     const int TileSize = 256;
-
     readonly double padding = 0.1;
     readonly CoordinateCollection coordinates;
     readonly BoundingBoxGeo expandedBoundingBox;
-
     readonly TileManager tileManager;
 
     public MapGenerator(CoordinateCollection coordinates, string mapStyle)
     {
         this.coordinates = coordinates;
-
         BoundingBoxGeo polygonBoundingBox = new(
             north: coordinates.Max(c => c.Latitude),
             south: coordinates.Min(c => c.Latitude),
             east: coordinates.Max(c => c.Longitude),
             west: coordinates.Min(c => c.Longitude)
         );
-
         BoundingBoxGeo paddedBoundingBox = polygonBoundingBox.Pad(padding);
-
-        // The factor 0.5 gives us approximately twice the area in each dimension for the whole map image
         expandedBoundingBox = paddedBoundingBox.Pad(0.5);
         Console.WriteLine($"Expanded bounding box: ({expandedBoundingBox.West},{expandedBoundingBox.South}) to ({expandedBoundingBox.East},{expandedBoundingBox.North})");
-
         tileManager = new(polygonBoundingBox, expandedBoundingBox, mapStyle, TileSize);
     }
 
@@ -49,27 +44,81 @@ public class MapGenerator
         }
 
         int zoom = tileManager.Zoom;
+        (int minTileX, _, int minTileY, _) = MapHelper.GetTileBounds(expandedBoundingBox, zoom);
 
-        (int minTileX, int maxTileX, int minTileY, int maxTileY) = MapHelper.GetTileBounds(expandedBoundingBox, zoom);
-
-        // Draw the polygon on the full image before cropping
-        DrawPolygonBoundary(fullImage, zoom, minTileX, minTileY);
-
-        // --- Rotated rectangle mask crop approach with MBR ---
-        // 1. Project polygon to pixel space
-        var pixelPoints = coordinates.Select(coord =>
+        var basePolygonVertices = coordinates.Select(coord =>
         {
-            int px = MapHelper.LonToPixelX(coord.Longitude, zoom) - minTileX * TileSize;
-            int py = MapHelper.LatToPixelY(coord.Latitude, zoom) - minTileY * TileSize;
-            return new PointF(px, py);
+            double x = MapHelper.LonToPixelX(coord.Longitude, zoom) - minTileX * TileSize;
+            double y = MapHelper.LatToPixelY(coord.Latitude, zoom) - minTileY * TileSize;
+            return new PointF((float)x, (float)y);
         }).ToList();
 
-        // 2. Compute the minimum bounding rectangle (MBR) of the polygon
+        var pixelPoints = basePolygonVertices; // Used by MBR code later
+        List<PointF> expandedPolygonVertices = ExpandPolygon(basePolygonVertices, 8);
+
+        (string outputPngPath, _) =
+            await OsmSkiaRenderer.RenderBasicMapToPngCropped($"osm_{Guid.NewGuid()}.png", coordinates);
+
+        Console.WriteLine("Applying OSM overlay and visual effects...");
+        using (Image<Rgba32> osmOverlayImage = await Image.LoadAsync<Rgba32>(outputPngPath))
+        {
+            fullImage.Mutate(ctx =>
+            {
+                // 1. Desaturate the entire fullImage (background)
+                ctx.Grayscale(1.0f).Brightness(0.8f);
+
+                // 2. Prepare and draw the OSM overlay (foreground within polygon)
+                var targetRectOnFullImage = GetBoundingBox(expandedPolygonVertices);
+
+                if (targetRectOnFullImage.Width > 0 && targetRectOnFullImage.Height > 0)
+                {
+                    using (var preparedOsmImage = osmOverlayImage.Clone(osmCtx =>
+                    {
+                        osmCtx.Resize(new ResizeOptions
+                        {
+                            Size = targetRectOnFullImage.Size,
+                            Mode = ResizeMode.Stretch
+                        });
+                    }))
+                    {
+                        // Create a temporary image for the clipped OSM overlay
+                        using (var clippedOsmPortion = new Image<Rgba32>(targetRectOnFullImage.Width, targetRectOnFullImage.Height, Color.Transparent))
+                        {
+                            var relativeExpandedVertices = expandedPolygonVertices
+                                .Select(p => new PointF(p.X - targetRectOnFullImage.X, p.Y - targetRectOnFullImage.Y))
+                                .ToArray();
+                            var clippingPathForOverlay = new PathBuilder().AddLines(relativeExpandedVertices).Build();
+
+                            clippedOsmPortion.Mutate(octx =>
+                            {
+                                octx.SetGraphicsOptions(new GraphicsOptions { Antialias = true });
+                                var imageBrush = new ImageBrush(preparedOsmImage);
+                                octx.Fill(imageBrush, clippingPathForOverlay);
+                            });
+                            // Draw this clipped portion onto the main fullImage
+                            ctx.DrawImage(clippedOsmPortion, targetRectOnFullImage.Location, 1f);
+                        }
+                    }
+                }
+                // 3. Draw the red outline (topmost)
+                ctx.DrawPolygon(Color.Red, 4f, expandedPolygonVertices.ToArray());
+            });
+        }
+        Console.WriteLine("OSM overlay and visual effects applied successfully!");
+
+        if (System.IO.File.Exists(outputPngPath))
+        {
+            try { System.IO.File.Delete(outputPngPath); }
+            catch (System.IO.IOException ex) { Console.WriteLine($"Warning: Could not delete temporary OSM image file {outputPngPath}. {ex.Message}"); }
+        }
+
+        // --- Rotated rectangle mask crop approach with MBR ---
+        // pixelPoints is already defined above using basePolygonVertices
         var (Center, Width, Height, Angle) = ComputeMinimumBoundingRectangle(pixelPoints);
         float rectCenterX = Center.X;
         float rectCenterY = Center.Y;
-        float rectW = Width * 1.2f; // Add 20% margin (10% each side)
-        float rectH = Height * 1.2f;
+        float rectW = Width * 1.1f; // Add 10% margin (5% each side)
+        float rectH = Height * 1.1f;
 
         if (rectW >= rectH)
             rectH = rectW * 2400 / 3250;
@@ -139,176 +188,16 @@ public class MapGenerator
         fullImage.Dispose();
 
         // 6. Optionally, scale for readability
-        float zoomFactor = 1.5f;
-        var scaled = portrait.Clone(ctx => ctx.Resize((int)(portrait.Width * zoomFactor), (int)(portrait.Height * zoomFactor)));
-        portrait.Dispose();
+        // float zoomFactor = 1.5f;
+        // var scaled = portrait.Clone(ctx => ctx.Resize((int)(portrait.Width * zoomFactor), (int)(portrait.Height * zoomFactor)));
+        // portrait.Dispose();
 
         // Save the map image temporarily
-        string tempImagePath = Path.Combine(Path.GetTempPath(), $"map_{Guid.NewGuid()}.png");
-        scaled.Save(tempImagePath);
-        scaled.Dispose();
-
-        return tempImagePath;
-    }
-
-    internal async Task<string> GenerateMapWithOsmOverlayAsync()
-    {
-        // 1. Start both tasks without awaiting immediately
-        var osmTask = OsmSkiaRenderer.RenderBasicMapToPngCropped(
-            Path.Combine(Path.GetTempPath(), $"osm_{Guid.NewGuid()}.png"),
-            coordinates
-        );
-        var rasterTask = tileManager.GenerateTilesImageAsync();
-
-        // 2. Await both tasks in parallel
-        await Task.WhenAll(osmTask, rasterTask);
-
-        var (osmImagePath, osmPolygonPixels) = osmTask.Result;
-        using var osmImage = Image.Load<Rgba32>(osmImagePath);
-        Image<Rgba32> fullImage = rasterTask.Result;
-        if (fullImage is null)
-        {
-            Console.WriteLine("Error: Could not generate map image");
-            return string.Empty;
-        }
-
-        // 3. Use the OSM polygon pixels for all further steps
-        var pixelPoints = osmPolygonPixels.Select(pt => new PointF(pt.X, pt.Y)).ToList();
-
-        // 4. Compute the minimum bounding rectangle (MBR) of the polygon
-        var (Center, Width, Height, Angle) = ComputeMinimumBoundingRectangle(pixelPoints);
-        float rectCenterX = Center.X;
-        float rectCenterY = Center.Y;
-        float rectW = Width * 1.2f; // Add 20% margin (10% each side)
-        float rectH = Height * 1.2f;
-        if (rectW >= rectH)
-            rectH = rectW * 2400 / 3250;
-        else
-            rectW = rectH * 3250 / 2400;
-        float rotationAngle = Angle;
-        float radians = rotationAngle * (float)Math.PI / 180f;
-        var halfW = rectW / 2f;
-        var halfH = rectH / 2f;
-
-        // 5. Create a mask image (same size as OSM image), draw a white filled rectangle rotated by rotationAngle
-        using Image<Rgba32> mask = new(osmImage.Width, osmImage.Height, Color.Black);
-        var corners = new[] {
-            new PointF(-halfW, -halfH),
-            new PointF(halfW, -halfH),
-            new PointF(halfW, halfH),
-            new PointF(-halfW, halfH)
-        };
-        var rotatedCorners = corners.Select(p =>
-        {
-            float x = p.X * (float)Math.Cos(radians) - p.Y * (float)Math.Sin(radians) + rectCenterX;
-            float y = p.X * (float)Math.Sin(radians) + p.Y * (float)Math.Cos(radians) + rectCenterY;
-            return new PointF(x, y);
-        }).ToArray();
-        mask.Mutate(ctx => ctx.FillPolygon(Color.White, rotatedCorners));
-
-        // 6. Cut out the region from the OSM image using the mask
-        Image<Rgba32> osmCutout = new((int)rectW, (int)rectH);
-        osmCutout.Mutate(ctx => ctx.Clear(Color.Transparent));
-        for (int y = 0; y < (int)rectH; y++)
-        {
-            for (int x = 0; x < (int)rectW; x++)
-            {
-                float relX = x - halfW;
-                float relY = y - halfH;
-                float srcX = relX * (float)Math.Cos(radians) - relY * (float)Math.Sin(radians) + rectCenterX;
-                float srcY = relX * (float)Math.Sin(radians) + relY * (float)Math.Cos(radians) + rectCenterY;
-                int ix = (int)Math.Round(srcX);
-                int iy = (int)Math.Round(srcY);
-                if (ix >= 0 && ix < osmImage.Width && iy >= 0 && iy < osmImage.Height)
-                {
-                    if (mask[ix, iy].R > 128)
-                    {
-                        osmCutout[x, y] = osmImage[ix, iy];
-                    }
-                }
-            }
-        }
-        mask.Dispose();
-
-        // 7. Optionally, rotate to portrait (A4) orientation
-        Image<Rgba32> portrait;
-        if (osmCutout.Width > osmCutout.Height)
-        {
-            portrait = osmCutout.Clone(ctx => ctx.Rotate(90));
-        }
-        else
-        {
-            portrait = osmCutout.Clone();
-        }
-        osmCutout.Dispose();
-        osmImage.Dispose();
-
-        // 8. Optionally, scale for readability
-        float zoomFactor = 1.5f;
-        var scaled = portrait.Clone(ctx => ctx.Resize((int)(portrait.Width * zoomFactor), (int)(portrait.Height * zoomFactor)));
+        string tempImagePath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"map_{Guid.NewGuid()}.png");
+        portrait.Save(tempImagePath);
         portrait.Dispose();
 
-        // Save the OSM map image temporarily
-        string tempOsmImagePath = Path.Combine(Path.GetTempPath(), $"osm_map_{Guid.NewGuid()}.png");
-        scaled.Save(tempOsmImagePath);
-        scaled.Dispose();
-
-        // You can now merge this with the raster map using the same mask and alignment logic
-        // Return both the raster and OSM image paths for further compositing
-        return tempOsmImagePath;
-    }
-
-    void DrawPolygonBoundary(
-        Image<Rgba32> image,
-        int zoom,
-        int minTileX,
-        int minTileY)
-    {
-        IEnumerable<(double x, double y)> polygonCoordinates = coordinates.Select(coord =>
-        {
-            double x = MapHelper.LonToPixelX(coord.Longitude, zoom) - minTileX * TileSize;
-            double y = MapHelper.LatToPixelY(coord.Latitude, zoom) - minTileY * TileSize;
-            return (x, y);
-        });
-
-        Console.WriteLine("Applying visual effect: colored polygon on grayscale background...");
-
-        // Convert the polygon coordinates to pixel coordinates
-        List<PointF> points = [];
-        foreach ((double x, double y) in polygonCoordinates)
-            points.Add(new PointF((float)x, (float)y));
-
-        // Create a slightly larger polygon for clarity
-        List<PointF> expandedPoints = ExpandPolygon(points, 8);
-
-        // STEP 1: Keep a copy of the original colored image
-        using Image<Rgba32> originalImage = image.Clone();
-
-        // STEP 2: Create fully desaturated grayscale version with slightly reduced brightness
-        image.Mutate(ctx => ctx.Grayscale(1.0f).Brightness(0.9f));
-
-        // STEP 3: Create a polygon mask based on the expanded points
-        using Image<Rgba32> mask = new(image.Width, image.Height, Color.Black);
-
-        // Fill the polygon area with white
-        mask.Mutate(ctx =>
-        {
-            ctx.FillPolygon(Color.White, [.. expandedPoints]);
-        });
-
-        // STEP 4: Copy back colored pixels from original image where mask is white (inside polygon)
-        for (int y = 0; y < image.Height; y++)
-            for (int x = 0; x < image.Width; x++) // Check if the pixel is inside the polygon (white in mask)
-                if (mask[x, y].R > 128) // Use threshold for white detection
-                    image[x, y] = originalImage[x, y]; // Copy the pixel from the original colored image
-
-        // STEP 5: Add a solid red outline around the polygon
-        image.Mutate(ctx =>
-        {
-            ctx.DrawPolygon(Color.Red, 4f, [.. expandedPoints]);
-        });
-
-        Console.WriteLine("Visualization effect applied successfully!");
+        return tempImagePath;
     }
 
     static List<PointF> ExpandPolygon(List<PointF> points, ushort expandBy)
@@ -393,5 +282,19 @@ public class MapGenerator
             }
         }
         return (bestCenter, bestW, bestH, bestAngle);
+    }
+
+    // Helper method to get the bounding box of a list of points
+    private static Rectangle GetBoundingBox(List<PointF> points)
+    {
+        if (points == null || !points.Any())
+        {
+            return Rectangle.Empty;
+        }
+        float minX = points.Min(p => p.X);
+        float minY = points.Min(p => p.Y);
+        float maxX = points.Max(p => p.X);
+        float maxY = points.Max(p => p.Y);
+        return new Rectangle((int)Math.Floor(minX), (int)Math.Floor(minY), (int)Math.Ceiling(maxX - minX), (int)Math.Ceiling(maxY - minY));
     }
 }

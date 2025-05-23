@@ -41,7 +41,7 @@ public static class PdfGenerator
                 {
                     content.AlignMiddle().AlignCenter().Image(mapImagePath)
                         .FitArea()
-                        .WithCompressionQuality(ImageCompressionQuality.High); // High quality for PDF image
+                        .WithCompressionQuality(ImageCompressionQuality.VeryHigh); // High quality for PDF image
                 });
             });
         })

@@ -24,7 +24,7 @@ public static partial class Program
             }
 
             string tempImagePath = await new MapGenerator(KmlProcessor.Coordinates, mapStyle)
-                .GenerateMapWithOsmOverlayAsync();
+                .GenerateMapAsync();
 
             if (string.IsNullOrEmpty(tempImagePath))
             {
