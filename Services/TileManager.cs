@@ -229,14 +229,35 @@ public class TileManager(BoundingBoxGeo boundingBox, BoundingBoxGeo expandedBoun
 
     static string GetTitleUrlTemplate(string mapStyle)
     {
-        return mapStyle.ToLower() switch
+        string? apiKey = null;
+        // Only read API key if needed
+        var apiKeyPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "apikey.txt");
+        if (File.Exists(apiKeyPath))
+            apiKey = File.ReadAllText(apiKeyPath).Trim();
+
+        string template = mapStyle.ToLower() switch
         {
             "cycle" => "https://a.tile-cyclosm.openstreetmap.fr/cyclosm/{0}/{1}/{2}.png",
             "topo" => "https://a.tile.opentopomap.org/{0}/{1}/{2}.png",
             "carto-light" => "https://cartodb-basemaps-a.global.ssl.fastly.net/light_all/{0}/{1}/{2}.png",
             "carto-dark" => "https://cartodb-basemaps-a.global.ssl.fastly.net/dark_all/{0}/{1}/{2}.png",
+            "osm-bright" => "https://maps.geoapify.com/v1/tile/osm-bright/{0}/{1}/{2}.png?apiKey=YOUR_API_KEY",
+            "osm-liberty" => "https://maps.geoapify.com/v1/tile/osm-liberty/{0}/{1}/{2}.png?apiKey=YOUR_API_KEY",
+            "maptiler-3d" => "https://maps.geoapify.com/v1/tile/maptiler-3d/{0}/{1}/{2}.png?apiKey=YOUR_API_KEY",
+            "toner" => "https://maps.geoapify.com/v1/tile/toner/{0}/{1}/{2}.png?apiKey=YOUR_API_KEY",
+            "positron" => "https://maps.geoapify.com/v1/tile/positron/{0}/{1}/{2}.png?apiKey=YOUR_API_KEY",
+            "dark-matter" => "https://maps.geoapify.com/v1/tile/dark-matter/{0}/{1}/{2}.png?apiKey=YOUR_API_KEY",
+            "klokantech" => "https://maps.geoapify.com/v1/tile/klokantech-basic/{0}/{1}/{2}.png?apiKey=YOUR_API_KEY",
+            "outdoor" => "https://maps.geoapify.com/v1/tile/outdoor/{0}/{1}/{2}.png?apiKey=YOUR_API_KEY",
+            "satellite" => "https://maps.geoapify.com/v1/tile/satellite/{0}/{1}/{2}.jpg?apiKey=YOUR_API_KEY",
+            "hybrid" => "https://maps.geoapify.com/v1/tile/hybrid/{0}/{1}/{2}.jpg?apiKey=YOUR_API_KEY",
             "standard" => "https://tile.openstreetmap.org/{0}/{1}/{2}.png",
             _ => "https://tile.openstreetmap.org/{0}/{1}/{2}.png",
         };
+
+        if (apiKey != null)
+            template = template.Replace("YOUR_API_KEY", apiKey);
+
+        return template;
     }
 }

@@ -53,7 +53,18 @@ public static partial class Program
             Console.WriteLine("  cycle           - CyclOSM style with more road details");
             Console.WriteLine("  topo            - OpenTopoMap with elevation contours");
             Console.WriteLine("  carto-light     - OpenStreetMap Carto style");
-            Console.WriteLine("  darto-dark      - OpenStreetMap Carto dark style");
+            Console.WriteLine("  carto-dark      - OpenStreetMap Carto dark style");
+            Console.WriteLine("  osm-bright      - Geoapify OSM Bright style");
+            Console.WriteLine("  osm-liberty     - Geoapify OSM Liberty style");
+            Console.WriteLine("  maptiler-3d     - Geoapify Maptiler 3D style");
+            Console.WriteLine("  toner           - Geoapify Toner style (black and white)");
+            Console.WriteLine("  positron        - Geoapify Positron style (light)");
+            Console.WriteLine("  dark-matter     - Geoapify Dark Matter style");
+            Console.WriteLine("  klokantech      - Geoapify Klokantech Basic style");
+            Console.WriteLine("  outdoor         - Geoapify Outdoor style");
+            Console.WriteLine("  satellite       - Geoapify Satellite imagery");
+            Console.WriteLine("  hybrid          - Geoapify Hybrid (satellite + labels)");
+
             return;
         }
 

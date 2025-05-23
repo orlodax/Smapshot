@@ -17,20 +17,27 @@ public static class OsmSkiaRenderer
     /// </summary>
     public static async Task<(string outputPng, List<SKPoint> polygonPixels)> RenderBasicMapToPngCropped(string outputPng, CoordinateCollection coordinates)
     {
-        Console.WriteLine("Startin OSM...");
-
-        // Compute minimal bounding box of the polygon
+        Console.WriteLine("Startin OSM...");        // Compute minimal bounding box of the polygon
         var minLon = coordinates.Min(c => c.Longitude);
         var maxLon = coordinates.Max(c => c.Longitude);
         var minLat = coordinates.Min(c => c.Latitude);
         var maxLat = coordinates.Max(c => c.Latitude);
 
-        // Image size: tightly fit the polygon bounding box
+        // Calculate the center latitude for scaling correction
+        double centerLat = (minLat + maxLat) / 2.0;
+        
+        // Correct for longitude distance scaling based on latitude
+        // At the equator, 1 degree longitude ≈ 1 degree latitude in distance
+        // At higher latitudes, longitude degrees become shorter
+        double lonCorrection = Math.Cos(centerLat * Math.PI / 180.0);
+        
+        // Image size: tightly fit the polygon bounding box with correction for longitude
         int targetMaxDim = 2000;
-        double scaleX = targetMaxDim / (maxLon - minLon);
+        double correctedLonDiff = (maxLon - minLon) * lonCorrection;
+        double scaleX = targetMaxDim / correctedLonDiff;
         double scaleY = targetMaxDim / (maxLat - minLat);
         double scale = Math.Min(scaleX, scaleY);
-        int width = (int)Math.Ceiling((maxLon - minLon) * scale);
+        int width = (int)Math.Ceiling(correctedLonDiff * scale);
         int height = (int)Math.Ceiling((maxLat - minLat) * scale);
 
         // Prepare OSM data
@@ -153,8 +160,7 @@ public static class OsmSkiaRenderer
                     double offsetLatUnits = (BorderOffset / scale) * normDy;
                     offsetLon += offsetLonUnits;
                     offsetLat += offsetLatUnits;
-                }
-                float x = (float)((offsetLon - minLon) * scale);
+                }                float x = (float)(((offsetLon - minLon) * lonCorrection) * scale);
                 float y = (float)((maxLat - offsetLat) * scale); // y axis: top = maxLat
                 if (first) { polygonPath.MoveTo(x, y); first = false; }
                 else { polygonPath.LineTo(x, y); }
@@ -191,11 +197,10 @@ public static class OsmSkiaRenderer
             canvas.ClipPath(polygonPath, SKClipOperation.Intersect);
 
             // --- Orphan detection: Build road connectivity graph and filter using only segments inside the polygon ---
-            var nodeIdToPoint = nodesInBox.ToDictionary(
-                kv => kv.Key,
+            var nodeIdToPoint = nodesInBox.ToDictionary(                kv => kv.Key,
                 kv =>
                 {
-                    float x = (float)((kv.Value.lon - minLon) * scale);
+                    float x = (float)(((kv.Value.lon - minLon) * lonCorrection) * scale);
                     float y = (float)((maxLat - kv.Value.lat) * scale);
                     return new SKPoint(x, y);
                 });
@@ -377,8 +382,7 @@ public static class OsmSkiaRenderer
                 bool firstWater = true;
                 foreach (var nodeId in nodeIds)
                 {
-                    if (!nodesInBox.TryGetValue(nodeId, out var coord)) continue;
-                    float x = (float)((coord.lon - minLon) * scale);
+                    if (!nodesInBox.TryGetValue(nodeId, out var coord)) continue;                    float x = (float)(((coord.lon - minLon) * lonCorrection) * scale);
                     float y = (float)((maxLat - coord.lat) * scale);
                     if (firstWater) { path.MoveTo(x, y); firstWater = false; }
                     else { path.LineTo(x, y); }
@@ -411,11 +415,9 @@ public static class OsmSkiaRenderer
                 for (int i = 0; i < ids.Count - 1; i++)
                 {
                     if (!nodesInBox.TryGetValue(ids[i], out var coordA) || !nodesInBox.TryGetValue(ids[i + 1], out var coordB))
-                        continue;
-
-                    float xA = (float)((coordA.lon - minLon) * scale);
+                        continue;                    float xA = (float)(((coordA.lon - minLon) * lonCorrection) * scale);
                     float yA = (float)((maxLat - coordA.lat) * scale);
-                    float xB = (float)((coordB.lon - minLon) * scale);
+                    float xB = (float)(((coordB.lon - minLon) * lonCorrection) * scale);
                     float yB = (float)((maxLat - coordB.lat) * scale);
 
                     bool aInside = polygonPath.Contains(xA, yA);
@@ -477,8 +479,7 @@ public static class OsmSkiaRenderer
                     bool firstOutline = true;
                     foreach (var nodeId in nodeIds)
                     {
-                        if (!nodesInBox.TryGetValue(nodeId, out var coord)) continue;
-                        float x = (float)((coord.lon - minLon) * scale);
+                        if (!nodesInBox.TryGetValue(nodeId, out var coord)) continue;                        float x = (float)(((coord.lon - minLon) * lonCorrection) * scale);
                         float y = (float)((maxLat - coord.lat) * scale);
                         if (firstOutline) { path.MoveTo(x, y); firstOutline = false; }
                         else { path.LineTo(x, y); }
@@ -500,8 +501,7 @@ public static class OsmSkiaRenderer
                 bool firstMain = true;
                 foreach (var nodeId in nodeIds)
                 {
-                    if (!nodesInBox.TryGetValue(nodeId, out var coord)) continue;
-                    float x = (float)((coord.lon - minLon) * scale);
+                    if (!nodesInBox.TryGetValue(nodeId, out var coord)) continue;                    float x = (float)(((coord.lon - minLon) * lonCorrection) * scale);
                     float y = (float)((maxLat - coord.lat) * scale);
                     if (firstMain) { mainPath.MoveTo(x, y); firstMain = false; }
                     else { mainPath.LineTo(x, y); }
@@ -561,8 +561,7 @@ public static class OsmSkiaRenderer
                     int insideCount = 0;
                     for (int k = 0; k < window; k++)
                     {
-                        if (!nodesInBox.TryGetValue(nodeIds[j + k], out var coord)) break;
-                        float x = (float)((coord.lon - minLon) * scale);
+                        if (!nodesInBox.TryGetValue(nodeIds[j + k], out var coord)) break;                        float x = (float)(((coord.lon - minLon) * lonCorrection) * scale);
                         float y = (float)((maxLat - coord.lat) * scale);
                         segPts.Add(new SKPoint(x, y));
                         if (polygonPath.Contains(x, y)) insideCount++;
@@ -593,13 +592,12 @@ public static class OsmSkiaRenderer
                         if (len > maxLen) { maxLen = len; bestIdx = j; }
                     }
                     if (maxLen > 0)
-                    {
-                        var segPts = new List<SKPoint>();
+                    {                        var segPts = new List<SKPoint>();
                         if (nodesInBox.TryGetValue(nodeIds[bestIdx], out var c0) && nodesInBox.TryGetValue(nodeIds[bestIdx + 1], out var c1))
                         {
-                            float x0 = (float)((c0.lon - minLon) * scale);
+                            float x0 = (float)(((c0.lon - minLon) * lonCorrection) * scale);
                             float y0 = (float)((maxLat - c0.lat) * scale);
-                            float x1 = (float)((c1.lon - minLon) * scale);
+                            float x1 = (float)(((c1.lon - minLon) * lonCorrection) * scale);
                             float y1 = (float)((maxLat - c1.lat) * scale);
                             segPts.Add(new SKPoint(x0, y0));
                             segPts.Add(new SKPoint(x1, y1));
