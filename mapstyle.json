@@ -32,7 +32,12 @@
         },
         "service": {
             "color": "#FFFFFF",
-            "width": 3,
+            "width": 1,
+            "outlineColor": "#BCBCBC"
+        },
+        "unclassified": {
+            "color": "#FFFFFF",
+            "width": 1,
             "outlineColor": "#BCBCBC"
         },
         "default": {

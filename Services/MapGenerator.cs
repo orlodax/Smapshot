@@ -151,6 +151,113 @@ public class MapGenerator
         return tempImagePath;
     }
 
+    internal async Task<string> GenerateMapWithOsmOverlayAsync()
+    {
+        // 1. Start both tasks without awaiting immediately
+        var osmTask = OsmSkiaRenderer.RenderBasicMapToPngCropped(
+            Path.Combine(Path.GetTempPath(), $"osm_{Guid.NewGuid()}.png"),
+            coordinates
+        );
+        var rasterTask = tileManager.GenerateTilesImageAsync();
+
+        // 2. Await both tasks in parallel
+        await Task.WhenAll(osmTask, rasterTask);
+
+        var (osmImagePath, osmPolygonPixels) = osmTask.Result;
+        using var osmImage = Image.Load<Rgba32>(osmImagePath);
+        Image<Rgba32> fullImage = rasterTask.Result;
+        if (fullImage is null)
+        {
+            Console.WriteLine("Error: Could not generate map image");
+            return string.Empty;
+        }
+
+        // 3. Use the OSM polygon pixels for all further steps
+        var pixelPoints = osmPolygonPixels.Select(pt => new PointF(pt.X, pt.Y)).ToList();
+
+        // 4. Compute the minimum bounding rectangle (MBR) of the polygon
+        var (Center, Width, Height, Angle) = ComputeMinimumBoundingRectangle(pixelPoints);
+        float rectCenterX = Center.X;
+        float rectCenterY = Center.Y;
+        float rectW = Width * 1.2f; // Add 20% margin (10% each side)
+        float rectH = Height * 1.2f;
+        if (rectW >= rectH)
+            rectH = rectW * 2400 / 3250;
+        else
+            rectW = rectH * 3250 / 2400;
+        float rotationAngle = Angle;
+        float radians = rotationAngle * (float)Math.PI / 180f;
+        var halfW = rectW / 2f;
+        var halfH = rectH / 2f;
+
+        // 5. Create a mask image (same size as OSM image), draw a white filled rectangle rotated by rotationAngle
+        using Image<Rgba32> mask = new(osmImage.Width, osmImage.Height, Color.Black);
+        var corners = new[] {
+            new PointF(-halfW, -halfH),
+            new PointF(halfW, -halfH),
+            new PointF(halfW, halfH),
+            new PointF(-halfW, halfH)
+        };
+        var rotatedCorners = corners.Select(p =>
+        {
+            float x = p.X * (float)Math.Cos(radians) - p.Y * (float)Math.Sin(radians) + rectCenterX;
+            float y = p.X * (float)Math.Sin(radians) + p.Y * (float)Math.Cos(radians) + rectCenterY;
+            return new PointF(x, y);
+        }).ToArray();
+        mask.Mutate(ctx => ctx.FillPolygon(Color.White, rotatedCorners));
+
+        // 6. Cut out the region from the OSM image using the mask
+        Image<Rgba32> osmCutout = new((int)rectW, (int)rectH);
+        osmCutout.Mutate(ctx => ctx.Clear(Color.Transparent));
+        for (int y = 0; y < (int)rectH; y++)
+        {
+            for (int x = 0; x < (int)rectW; x++)
+            {
+                float relX = x - halfW;
+                float relY = y - halfH;
+                float srcX = relX * (float)Math.Cos(radians) - relY * (float)Math.Sin(radians) + rectCenterX;
+                float srcY = relX * (float)Math.Sin(radians) + relY * (float)Math.Cos(radians) + rectCenterY;
+                int ix = (int)Math.Round(srcX);
+                int iy = (int)Math.Round(srcY);
+                if (ix >= 0 && ix < osmImage.Width && iy >= 0 && iy < osmImage.Height)
+                {
+                    if (mask[ix, iy].R > 128)
+                    {
+                        osmCutout[x, y] = osmImage[ix, iy];
+                    }
+                }
+            }
+        }
+        mask.Dispose();
+
+        // 7. Optionally, rotate to portrait (A4) orientation
+        Image<Rgba32> portrait;
+        if (osmCutout.Width > osmCutout.Height)
+        {
+            portrait = osmCutout.Clone(ctx => ctx.Rotate(90));
+        }
+        else
+        {
+            portrait = osmCutout.Clone();
+        }
+        osmCutout.Dispose();
+        osmImage.Dispose();
+
+        // 8. Optionally, scale for readability
+        float zoomFactor = 1.5f;
+        var scaled = portrait.Clone(ctx => ctx.Resize((int)(portrait.Width * zoomFactor), (int)(portrait.Height * zoomFactor)));
+        portrait.Dispose();
+
+        // Save the OSM map image temporarily
+        string tempOsmImagePath = Path.Combine(Path.GetTempPath(), $"osm_map_{Guid.NewGuid()}.png");
+        scaled.Save(tempOsmImagePath);
+        scaled.Dispose();
+
+        // You can now merge this with the raster map using the same mask and alignment logic
+        // Return both the raster and OSM image paths for further compositing
+        return tempOsmImagePath;
+    }
+
     void DrawPolygonBoundary(
         Image<Rgba32> image,
         int zoom,

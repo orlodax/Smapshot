@@ -19,6 +19,8 @@ public class TileManager(BoundingBoxGeo boundingBox, BoundingBoxGeo expandedBoun
 
     public async Task<Image<Rgba32>> GenerateTilesImageAsync()
     {
+        Console.WriteLine("Startin raster...");
+
         CalculateOptimalZoomLevel();
 
         // Convert expanded lat/lon to tile coordinates at the higher zoom level
@@ -52,7 +54,10 @@ public class TileManager(BoundingBoxGeo boundingBox, BoundingBoxGeo expandedBoun
 
         Console.WriteLine($"Creating full map image with dimensions {fullWidth}x{fullHeight} pixels");
 
-        return await DownloadAndComposeTilesAsync(fullWidth, fullHeight);
+        // Download and compose tiles (I/O-bound for download, CPU-bound for composition)
+        var image = await DownloadAndComposeTilesAsync(fullWidth, fullHeight);
+
+        return image;
     }
 
     void CalculateOptimalZoomLevel()
@@ -89,7 +94,8 @@ public class TileManager(BoundingBoxGeo boundingBox, BoundingBoxGeo expandedBoun
 
         await DownloadMissingTilesAsync(tileImages, missingTiles);
 
-        return ComposeTiles(fullWidth, fullHeight, tileImages);
+        // Offload CPU-bound composition to background thread
+        return await Task.Run(() => ComposeTiles(fullWidth, fullHeight, tileImages));
     }
 
     private List<(int x, int y, int zoom, string cachePath)> TryLoadTilesFromCache(
@@ -217,6 +223,7 @@ public class TileManager(BoundingBoxGeo boundingBox, BoundingBoxGeo expandedBoun
             }
         }
 
+        Console.WriteLine("Finished raster");
         return fullImage;
     }
 
