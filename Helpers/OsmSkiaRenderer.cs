@@ -13,9 +13,9 @@ public static class OsmSkiaRenderer
     const float BorderOffset = 15f;
 
     /// <summary>
-    /// Renders the OSM map strictly within the polygon's bounding box, tightly cropped, and returns the output PNG path and polygon pixel coordinates.
+    /// Renders the OSM map strictly within the polygon's bounding box, tightly cropped, and returns the image and polygon pixel coordinates.
     /// </summary>
-    public static async Task<(string outputPng, List<SKPoint> polygonPixels)> RenderBasicMapToPngCropped(string outputPng, CoordinateCollection coordinates)
+    public static async Task<byte[]> RenderBasicMapToPngCropped(CoordinateCollection coordinates)
     {
         Console.WriteLine("Startin OSM...");        // Compute minimal bounding box of the polygon
         var minLon = coordinates.Min(c => c.Longitude);
@@ -25,12 +25,12 @@ public static class OsmSkiaRenderer
 
         // Calculate the center latitude for scaling correction
         double centerLat = (minLat + maxLat) / 2.0;
-        
+
         // Correct for longitude distance scaling based on latitude
         // At the equator, 1 degree longitude ≈ 1 degree latitude in distance
         // At higher latitudes, longitude degrees become shorter
         double lonCorrection = Math.Cos(centerLat * Math.PI / 180.0);
-        
+
         // Image size: tightly fit the polygon bounding box with correction for longitude
         int targetMaxDim = 2000;
         double correctedLonDiff = (maxLon - minLon) * lonCorrection;
@@ -39,6 +39,11 @@ public static class OsmSkiaRenderer
         double scale = Math.Min(scaleX, scaleY);
         int width = (int)Math.Ceiling(correctedLonDiff * scale);
         int height = (int)Math.Ceiling((maxLat - minLat) * scale);
+
+        // Increase canvas size for outline
+        int outlinePad = 10;
+        width += 2 * outlinePad;
+        height += 2 * outlinePad;
 
         // Prepare OSM data
         var osmPath = await DownloadOsmForBoundingBoxAsync(coordinates, "cache");
@@ -160,7 +165,8 @@ public static class OsmSkiaRenderer
                     double offsetLatUnits = (BorderOffset / scale) * normDy;
                     offsetLon += offsetLonUnits;
                     offsetLat += offsetLatUnits;
-                }                float x = (float)(((offsetLon - minLon) * lonCorrection) * scale);
+                }
+                float x = (float)(((offsetLon - minLon) * lonCorrection) * scale);
                 float y = (float)((maxLat - offsetLat) * scale); // y axis: top = maxLat
                 if (first) { polygonPath.MoveTo(x, y); first = false; }
                 else { polygonPath.LineTo(x, y); }
@@ -172,6 +178,8 @@ public static class OsmSkiaRenderer
             using var bitmap = new SKBitmap(width, height);
             using var canvas = new SKCanvas(bitmap);
             bitmap.Erase(SKColors.Transparent);
+            // Shift all drawing by outlinePad
+            canvas.Translate(outlinePad, outlinePad);
 
             // --- Load style config ---
             MapStyleConfig styleConfig;
@@ -197,7 +205,7 @@ public static class OsmSkiaRenderer
             canvas.ClipPath(polygonPath, SKClipOperation.Intersect);
 
             // --- Orphan detection: Build road connectivity graph and filter using only segments inside the polygon ---
-            var nodeIdToPoint = nodesInBox.ToDictionary(                kv => kv.Key,
+            var nodeIdToPoint = nodesInBox.ToDictionary(kv => kv.Key,
                 kv =>
                 {
                     float x = (float)(((kv.Value.lon - minLon) * lonCorrection) * scale);
@@ -382,7 +390,7 @@ public static class OsmSkiaRenderer
                 bool firstWater = true;
                 foreach (var nodeId in nodeIds)
                 {
-                    if (!nodesInBox.TryGetValue(nodeId, out var coord)) continue;                    float x = (float)(((coord.lon - minLon) * lonCorrection) * scale);
+                    if (!nodesInBox.TryGetValue(nodeId, out var coord)) continue; float x = (float)(((coord.lon - minLon) * lonCorrection) * scale);
                     float y = (float)((maxLat - coord.lat) * scale);
                     if (firstWater) { path.MoveTo(x, y); firstWater = false; }
                     else { path.LineTo(x, y); }
@@ -415,7 +423,7 @@ public static class OsmSkiaRenderer
                 for (int i = 0; i < ids.Count - 1; i++)
                 {
                     if (!nodesInBox.TryGetValue(ids[i], out var coordA) || !nodesInBox.TryGetValue(ids[i + 1], out var coordB))
-                        continue;                    float xA = (float)(((coordA.lon - minLon) * lonCorrection) * scale);
+                        continue; float xA = (float)(((coordA.lon - minLon) * lonCorrection) * scale);
                     float yA = (float)((maxLat - coordA.lat) * scale);
                     float xB = (float)(((coordB.lon - minLon) * lonCorrection) * scale);
                     float yB = (float)((maxLat - coordB.lat) * scale);
@@ -479,7 +487,7 @@ public static class OsmSkiaRenderer
                     bool firstOutline = true;
                     foreach (var nodeId in nodeIds)
                     {
-                        if (!nodesInBox.TryGetValue(nodeId, out var coord)) continue;                        float x = (float)(((coord.lon - minLon) * lonCorrection) * scale);
+                        if (!nodesInBox.TryGetValue(nodeId, out var coord)) continue; float x = (float)(((coord.lon - minLon) * lonCorrection) * scale);
                         float y = (float)((maxLat - coord.lat) * scale);
                         if (firstOutline) { path.MoveTo(x, y); firstOutline = false; }
                         else { path.LineTo(x, y); }
@@ -501,7 +509,7 @@ public static class OsmSkiaRenderer
                 bool firstMain = true;
                 foreach (var nodeId in nodeIds)
                 {
-                    if (!nodesInBox.TryGetValue(nodeId, out var coord)) continue;                    float x = (float)(((coord.lon - minLon) * lonCorrection) * scale);
+                    if (!nodesInBox.TryGetValue(nodeId, out var coord)) continue; float x = (float)(((coord.lon - minLon) * lonCorrection) * scale);
                     float y = (float)((maxLat - coord.lat) * scale);
                     if (firstMain) { mainPath.MoveTo(x, y); firstMain = false; }
                     else { mainPath.LineTo(x, y); }
@@ -513,7 +521,27 @@ public static class OsmSkiaRenderer
             }
 
             // Restore canvas state to remove polygonPath clipping before drawing labels
-            canvas.Restore();
+            canvas.Restore();            // Draw the 10px outline completely outside the polygon
+            using (var outlinePaint = new SKPaint
+            {
+                Color = SKColors.Red,
+                Style = SKPaintStyle.Stroke,
+                StrokeWidth = 20,  // Make it thicker because we'll only see half
+                IsAntialias = true
+            })
+            {
+                // Save the canvas state
+                canvas.Save();
+
+                // Create a clipping region that excludes the polygon area
+                canvas.ClipPath(polygonPath, SKClipOperation.Difference);
+
+                // Draw the outline - only the outside portion will be visible due to clipping
+                canvas.DrawPath(polygonPath, outlinePaint);
+
+                // Restore the canvas state
+                canvas.Restore();
+            }
 
             // --- Improved road label placement: geometry-aware, straightest segment, minimal nudge, allow multiple for long roads ---
             var labelFont = new SKFont(SKTypeface.Default, styleConfig.labelStyle.fontSize);
@@ -561,7 +589,7 @@ public static class OsmSkiaRenderer
                     int insideCount = 0;
                     for (int k = 0; k < window; k++)
                     {
-                        if (!nodesInBox.TryGetValue(nodeIds[j + k], out var coord)) break;                        float x = (float)(((coord.lon - minLon) * lonCorrection) * scale);
+                        if (!nodesInBox.TryGetValue(nodeIds[j + k], out var coord)) break; float x = (float)(((coord.lon - minLon) * lonCorrection) * scale);
                         float y = (float)((maxLat - coord.lat) * scale);
                         segPts.Add(new SKPoint(x, y));
                         if (polygonPath.Contains(x, y)) insideCount++;
@@ -584,15 +612,16 @@ public static class OsmSkiaRenderer
                     for (int j = 0; j <= nodeIds.Count - 2; j++)
                     {
                         if (!nodesInBox.TryGetValue(nodeIds[j], out var c0) || !nodesInBox.TryGetValue(nodeIds[j + 1], out var c1)) continue;
-                        float x0 = (float)((c0.lon - minLon) * scale);
+                        float x0 = (float)(((c0.lon - minLon) * lonCorrection) * scale);
                         float y0 = (float)((maxLat - c0.lat) * scale);
-                        float x1 = (float)((c1.lon - minLon) * scale);
+                        float x1 = (float)(((c1.lon - minLon) * lonCorrection) * scale);
                         float y1 = (float)((maxLat - c1.lat) * scale);
                         float len = (float)Math.Sqrt((x1 - x0) * (x1 - x0) + (y1 - y0) * (y1 - y0));
                         if (len > maxLen) { maxLen = len; bestIdx = j; }
                     }
                     if (maxLen > 0)
-                    {                        var segPts = new List<SKPoint>();
+                    {
+                        var segPts = new List<SKPoint>();
                         if (nodesInBox.TryGetValue(nodeIds[bestIdx], out var c0) && nodesInBox.TryGetValue(nodeIds[bestIdx + 1], out var c1))
                         {
                             float x0 = (float)(((c0.lon - minLon) * lonCorrection) * scale);
@@ -728,14 +757,9 @@ public static class OsmSkiaRenderer
                     }
                 }
             }
-
-            // Save the bitmap to the specified file
-            using var stream = File.OpenWrite(outputPng);
-            bitmap.Encode(stream, SKEncodedImageFormat.Png, 100);
-
             Console.WriteLine("Finished OSM");
 
-            return (outputPng, polygonPixels);
+            return bitmap.Encode(SKEncodedImageFormat.Png, 100).ToArray();
         });
     }
 

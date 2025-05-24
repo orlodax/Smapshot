@@ -35,6 +35,8 @@ public class MapGenerator
 
     internal async Task<string> GenerateMapAsync()
     {
+        Task<byte[]> osmRenderingTask = OsmSkiaRenderer.RenderBasicMapToPngCropped(coordinates);
+
         Image<Rgba32> fullImage = await tileManager.GenerateTilesImageAsync();
         if (fullImage is null)
         {
@@ -50,17 +52,16 @@ public class MapGenerator
             double x = MapHelper.LonToPixelX(coord.Longitude, zoom) - minTileX * TileSize;
             double y = MapHelper.LatToPixelY(coord.Latitude, zoom) - minTileY * TileSize;
             return new PointF((float)x, (float)y);
-        }).ToList();
-
-        var pixelPoints = basePolygonVertices; // Used by MBR code later
+        }).ToList(); var pixelPoints = basePolygonVertices; // Used by MBR code later
         List<PointF> expandedPolygonVertices = ExpandPolygon(basePolygonVertices, 8);
 
-        (string outputPngPath, _) =
-            await OsmSkiaRenderer.RenderBasicMapToPngCropped($"osm_{Guid.NewGuid()}.png", coordinates);
+        await osmRenderingTask; // Ensure OSM rendering is complete before proceeding
+        byte[] osmImageBytes = osmRenderingTask.Result;
 
         Console.WriteLine("Applying OSM overlay and visual effects...");
-        using (Image<Rgba32> osmOverlayImage = await Image.LoadAsync<Rgba32>(outputPngPath))
+        using (MemoryStream memStream = new(osmImageBytes))
         {
+            using Image<Rgba32> osmOverlayImage = Image.Load<Rgba32>(memStream);
             fullImage.Mutate(ctx =>
             {
                 // 1. Desaturate the entire fullImage (background)
@@ -71,45 +72,22 @@ public class MapGenerator
 
                 if (targetRectOnFullImage.Width > 0 && targetRectOnFullImage.Height > 0)
                 {
-                    using (var preparedOsmImage = osmOverlayImage.Clone(osmCtx =>
+                    using Image<Rgba32> resizedOsmOverlayImage = osmOverlayImage.Clone(osmCtx =>
                     {
                         osmCtx.Resize(new ResizeOptions
                         {
                             Size = targetRectOnFullImage.Size,
-                            Mode = ResizeMode.Stretch
+                            Mode = ResizeMode.Stretch // Ensures resizedOsmOverlayImage fills the target rectangle
                         });
-                    }))
-                    {
-                        // Create a temporary image for the clipped OSM overlay
-                        using (var clippedOsmPortion = new Image<Rgba32>(targetRectOnFullImage.Width, targetRectOnFullImage.Height, Color.Transparent))
-                        {
-                            var relativeExpandedVertices = expandedPolygonVertices
-                                .Select(p => new PointF(p.X - targetRectOnFullImage.X, p.Y - targetRectOnFullImage.Y))
-                                .ToArray();
-                            var clippingPathForOverlay = new PathBuilder().AddLines(relativeExpandedVertices).Build();
+                    });
+                    ctx.SetGraphicsOptions(new GraphicsOptions { Antialias = true });
 
-                            clippedOsmPortion.Mutate(octx =>
-                            {
-                                octx.SetGraphicsOptions(new GraphicsOptions { Antialias = true });
-                                var imageBrush = new ImageBrush(preparedOsmImage);
-                                octx.Fill(imageBrush, clippingPathForOverlay);
-                            });
-                            // Draw this clipped portion onto the main fullImage
-                            ctx.DrawImage(clippedOsmPortion, targetRectOnFullImage.Location, 1f);
-                        }
-                    }
+                    // Draw the resized OSM image onto the full image.
+                    ctx.DrawImage(resizedOsmOverlayImage, targetRectOnFullImage.Location, 1f);
                 }
-                // 3. Draw the red outline (topmost)
-                ctx.DrawPolygon(Color.Red, 4f, expandedPolygonVertices.ToArray());
             });
         }
         Console.WriteLine("OSM overlay and visual effects applied successfully!");
-
-        if (System.IO.File.Exists(outputPngPath))
-        {
-            try { System.IO.File.Delete(outputPngPath); }
-            catch (System.IO.IOException ex) { Console.WriteLine($"Warning: Could not delete temporary OSM image file {outputPngPath}. {ex.Message}"); }
-        }
 
         // --- Rotated rectangle mask crop approach with MBR ---
         // pixelPoints is already defined above using basePolygonVertices
@@ -148,9 +126,6 @@ public class MapGenerator
         }).ToArray();
         mask.Mutate(ctx => ctx.FillPolygon(Color.White, rotatedCorners));
 
-        // fullImage.Save("full_image.png");
-        // mask.Save("mask.png");
-
         // 4. Cut out the region from the original image using the mask
         Image<Rgba32> cutout = new((int)rectW, (int)rectH);
         cutout.Mutate(ctx => ctx.Clear(Color.Transparent));
@@ -173,6 +148,7 @@ public class MapGenerator
                 }
             }
         }
+        //mask.Save("mask.png");
         mask.Dispose();
 
         // 5. Optionally, rotate to portrait (A4) orientation
@@ -186,7 +162,9 @@ public class MapGenerator
         {
             portrait = cutout.Clone();
         }
+        //cutout.Save("cutout.png");
         cutout.Dispose();
+        //fullImage.Save("full_image.png");
         fullImage.Dispose();
 
         // 6. Optionally, scale for readability

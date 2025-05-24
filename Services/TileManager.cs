@@ -8,7 +8,7 @@ namespace Smapshot.Services;
 
 public class TileManager(BoundingBoxGeo boundingBox, BoundingBoxGeo expandedBoundingBox, string mapStyle, int tileSize)
 {
-    const int MaxTotalTiles = 512; // Increased from 64 to allow for larger area download
+    const int MaxTotalTiles = 256; // Increased from 64 to allow for larger area download
 
     readonly BoundingBoxGeo boundingBox = boundingBox;
     readonly BoundingBoxGeo expandedBoundingBox = expandedBoundingBox; // Expanded bounding box for tile download
