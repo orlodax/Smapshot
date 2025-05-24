@@ -17,7 +17,8 @@ public static class OsmSkiaRenderer
     /// </summary>
     public static async Task<byte[]> RenderBasicMapToPngCropped(CoordinateCollection coordinates)
     {
-        Console.WriteLine("Startin OSM...");        // Compute minimal bounding box of the polygon
+        Console.WriteLine("Startin OSM...");
+        // Compute minimal bounding box of the polygon
         var minLon = coordinates.Min(c => c.Longitude);
         var maxLon = coordinates.Max(c => c.Longitude);
         var minLat = coordinates.Min(c => c.Latitude);
@@ -57,6 +58,8 @@ public static class OsmSkiaRenderer
             var roads = new List<(List<long> nodeIds, string highway, string? name)>();
             var waterBodies = new List<(List<long> nodeIds, string type, string? name)>();
             var waterways = new List<(List<long> nodeIds, string type, string? name, float width)>();
+            var buildings = new List<(List<long> nodeIds, string type, string? name)>(); // Add buildings collection
+            var places = new Dictionary<long, (double lat, double lon, string name, string type)>(); // Add places collection
             var relationMembers = new Dictionary<long, List<(long id, string role)>>();
             var relations = new Dictionary<long, (long id, string type, Dictionary<string, string> tags)>();
 
@@ -67,6 +70,15 @@ public static class OsmSkiaRenderer
                 {
                     var node = (Node)element;
                     string? name = node.Tags?.ContainsKey("name") == true ? node.Tags["name"] : null;
+
+                    // Collect place nodes (cities, towns, villages, hamlets, suburbs, etc.)
+                    if (node.Tags?.ContainsKey("place") == true && node.Tags.ContainsKey("name") && node.Id.HasValue
+                        && node.Latitude.HasValue && node.Longitude.HasValue)
+                    {
+                        string place = node.Tags["place"];
+                        places.Add(node.Id.Value, (node.Latitude.Value, node.Longitude.Value, node.Tags["name"], place));
+                    }
+
                     if (node is not null && node.Id is { } id && node.Latitude is { } lat && node.Longitude is { } lon)
                         nodes[id] = (lat, lon, name);
                 }
@@ -112,6 +124,13 @@ public static class OsmSkiaRenderer
                         string? name = tags.ContainsKey("name") ? tags["name"] : null;
                         waterBodies.Add((way.Nodes.ToList(), type, name));
                     }
+                    // Add building recognition
+                    else if (tags.ContainsKey("building"))
+                    {
+                        string buildingType = tags["building"];
+                        string? name = tags.ContainsKey("name") ? tags["name"] : null;
+                        buildings.Add((way.Nodes.ToList(), buildingType, name));
+                    }
                 }
                 else if (element.Type == OsmGeoType.Relation)
                 {
@@ -144,8 +163,19 @@ public static class OsmSkiaRenderer
             var nodesInBox = nodes.Where(kv => kv.Value.lat >= minLat && kv.Value.lat <= maxLat && kv.Value.lon >= minLon && kv.Value.lon <= maxLon)
                                 .ToDictionary(kv => kv.Key, kv => kv.Value);
 
+            // Keep only places within or near the bounding box (with some padding for context)
+            double latPadding = (maxLat - minLat) * 0.1; // 10% padding
+            double lonPadding = (maxLon - minLon) * 0.1;
+            var filteredPlaces = places.Where(p =>
+                p.Value.lat >= minLat - latPadding && p.Value.lat <= maxLat + latPadding &&
+                p.Value.lon >= minLon - lonPadding && p.Value.lon <= maxLon + lonPadding)
+                .ToDictionary(kv => kv.Key, kv => kv.Value);
+
             // Pre-filter roads: only consider roads that have at least one node within the bounding box.
             var candidateRoads = roads.Where(r => r.nodeIds.Any(nodeId => nodesInBox.ContainsKey(nodeId))).ToList();
+
+            // Pre-filter buildings: only consider buildings that have at least one node within the bounding box
+            var candidateBuildings = buildings.Where(b => b.nodeIds.Any(nodeId => nodesInBox.ContainsKey(nodeId))).ToList();
 
             // Build the polygon path (with internal border offset for clarity)
             var polygonPath = new SKPath();
@@ -181,7 +211,7 @@ public static class OsmSkiaRenderer
             using var bitmap = new SKBitmap(width, height);
             using var canvas = new SKCanvas(bitmap);
             bitmap.Erase(SKColors.Transparent);
-            // Shift all drawing by outlinePad
+            // Shift all drawing to the outline pad
             canvas.Translate(outlinePad, outlinePad);
 
             // --- Load style config ---
@@ -388,6 +418,9 @@ public static class OsmSkiaRenderer
                 IsAntialias = true
             };
 
+            // Prepare storage for water body centers for label placement
+            var waterLabels = new List<(string name, SKPoint center, float area)>();
+
             foreach (var (nodeIds, type, name) in waterBodies)
             {
                 SKPath path = new();
@@ -405,7 +438,66 @@ public static class OsmSkiaRenderer
                 using var clipped = new SKPath();
                 if (path.Op(polygonPath, SKPathOp.Intersect, clipped))
                 {
-                    canvas.DrawPath(clipped, waterFillPaint);
+                    canvas.DrawPath(clipped, waterFillPaint);                    // Store water body label information if it has a name
+                    if (!string.IsNullOrEmpty(name))
+                    {
+                        // Calculate center point and area for the water body
+                        clipped.GetBounds(out SKRect bounds);
+                        float centerX = bounds.MidX;
+                        float centerY = bounds.MidY;
+                        float area = bounds.Width * bounds.Height; // Approximate area
+
+                        // Only add if center is inside the clipped polygon and the water body is large enough
+                        if (clipped.Contains(centerX, centerY) && area > 500.0f)  // Minimum size threshold
+                        {
+                            // Try to find a better center point using visual center calculation
+                            bool foundBetterCenter = false;
+
+                            // Only attempt visual center calculation for larger water bodies
+                            if (area > 5000.0f)
+                            {
+                                // Sample grid points within the bounds to find the most centered point
+                                int gridSize = 5;
+                                float bestDistance = float.MaxValue;
+                                float bestX = centerX, bestY = centerY;
+
+                                for (int gx = 1; gx < gridSize; gx++)
+                                {
+                                    for (int gy = 1; gy < gridSize; gy++)
+                                    {
+                                        float testX = bounds.Left + (bounds.Width * gx / gridSize);
+                                        float testY = bounds.Top + (bounds.Height * gy / gridSize);
+
+                                        if (clipped.Contains(testX, testY))
+                                        {
+                                            // Calculate distance from boundaries
+                                            float distLeft = testX - bounds.Left;
+                                            float distRight = bounds.Right - testX;
+                                            float distTop = testY - bounds.Top;
+                                            float distBottom = bounds.Bottom - testY;
+                                            float minDist = Math.Min(Math.Min(distLeft, distRight), Math.Min(distTop, distBottom));
+
+                                            if (minDist > bestDistance)
+                                            {
+                                                bestDistance = minDist;
+                                                bestX = testX;
+                                                bestY = testY;
+                                                foundBetterCenter = true;
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if (foundBetterCenter)
+                                {
+                                    centerX = bestX;
+                                    centerY = bestY;
+                                }
+                            }
+
+                            waterLabels.Add((name!, new SKPoint(centerX, centerY), area));
+                        }
+                    }
                 }
             }
 
@@ -543,6 +635,51 @@ public static class OsmSkiaRenderer
                     }
                     // Draw the road fill (main line)
                     canvas.DrawPath(roadPath, fillPaint);
+                }
+            }
+
+            // --- Draw buildings with fill style ---
+            var buildingFillPaint = new SKPaint
+            {
+                Color = SKColor.Parse(styleConfig.buildingStyle.color),
+                Style = SKPaintStyle.Fill,
+                IsAntialias = true
+            };
+
+            var buildingOutlinePaint = new SKPaint
+            {
+                Color = SKColor.Parse(styleConfig.buildingStyle.outlineColor),
+                Style = SKPaintStyle.Stroke,
+                StrokeWidth = 1.0f,
+                IsAntialias = true
+            };
+
+            foreach (var (nodeIds, buildingType, name) in candidateBuildings)
+            {
+                if (nodeIds.Count < 3) continue; // Need at least 3 points for a building polygon
+
+                SKPath buildingPath = new SKPath();
+                bool firstPoint = true;
+                foreach (var nodeId in nodeIds)
+                {
+                    if (!nodesInBox.TryGetValue(nodeId, out var coord)) continue;
+                    float x = (float)(((coord.lon - minLon) * lonCorrection) * scale);
+                    float y = (float)((maxLat - coord.lat) * scale);
+                    if (firstPoint) { buildingPath.MoveTo(x, y); firstPoint = false; }
+                    else { buildingPath.LineTo(x, y); }
+                }
+                buildingPath.Close();
+
+                // Only draw if we have a valid path
+                if (!buildingPath.IsEmpty)
+                {
+                    // Clip the building path to the polygon
+                    using var clipped = new SKPath();
+                    if (buildingPath.Op(polygonPath, SKPathOp.Intersect, clipped))
+                    {
+                        canvas.DrawPath(clipped, buildingFillPaint);
+                        canvas.DrawPath(clipped, buildingOutlinePaint);
+                    }
                 }
             }
 
@@ -812,11 +949,213 @@ public static class OsmSkiaRenderer
                         if (!labelPositionsByName.ContainsKey(label))
                             labelPositionsByName[label] = new List<SKPoint>();
                         labelPositionsByName[label].Add(labelAnchor);
-                        usedMidpoints.Add(cand.midPt);
-                        labelsPlaced++;
+                        usedMidpoints.Add(cand.midPt); labelsPlaced++;
                     }
                 }
             }
+
+            // --- Draw water body labels ---
+            // Sort water bodies by area (largest first) to prioritize larger water bodies
+            var sortedWaterLabels = waterLabels.OrderByDescending(w => w.area).ToList();
+
+            var waterLabelFont = new SKFont
+            {
+                Size = styleConfig.waterLabelStyle.fontSize,
+                Typeface = SKTypeface.FromFamilyName(
+                    SKTypeface.Default.FamilyName,
+                    styleConfig.waterLabelStyle.fontStyle == "Bold" ? SKFontStyle.Bold :
+                    styleConfig.waterLabelStyle.fontStyle == "Italic" ? SKFontStyle.Italic :
+                    SKFontStyle.Normal
+                )
+            }; var waterLabelPaint = new SKPaint
+            {
+                Color = SKColor.Parse(styleConfig.waterLabelStyle.color),
+                IsAntialias = true
+            };
+
+            // Create halo paint for better readability (subtle outline around text)
+            var waterHaloPaint = new SKPaint
+            {
+                Color = SKColors.White.WithAlpha(230),
+                IsAntialias = true,
+                Style = SKPaintStyle.Stroke,
+                StrokeWidth = 2.0f
+            };
+
+            foreach (var (name, center, _) in sortedWaterLabels)
+            {
+                // Skip if name is empty
+                if (string.IsNullOrEmpty(name)) continue;
+
+                // Measure the text to create a bounding box
+                waterLabelFont.MeasureText(name, out SKRect textBounds, waterLabelPaint);
+
+                // Create a slightly expanded rectangle for better legibility
+                float padding = 8.0f;
+                var bgRect = new SKRect(
+                    textBounds.Left - padding,
+                    textBounds.Top - padding,
+                    textBounds.Right + padding,
+                    textBounds.Bottom + padding
+                );
+
+                // Calculate the bounds in screen coordinates
+                var aabb = new SKRect(
+                    center.X + bgRect.Left,
+                    center.Y + bgRect.Top,
+                    center.X + bgRect.Right,
+                    center.Y + bgRect.Bottom
+                );
+
+                // Check if the label overlaps with any existing label
+                bool overlaps = placedLabelRects.Any(r => r.IntersectsWith(aabb));
+
+                // Check if anchor is inside polygon
+                bool anchorInsidePolygon = polygonPath.Contains(center.X, center.Y);
+                if (anchorInsidePolygon && !overlaps)
+                {
+                    canvas.Save();
+                    canvas.Translate(center.X, center.Y);                    // Draw text halo/outline first
+                    canvas.DrawText(name, 0, 0, SKTextAlign.Center, waterLabelFont, waterHaloPaint);
+                    // Draw the label text on top
+                    canvas.DrawText(name, 0, 0, SKTextAlign.Center, waterLabelFont, waterLabelPaint);
+                    canvas.Restore();
+
+                    placedLabelRects.Add(aabb);
+                    if (!labelPositionsByName.ContainsKey(name))
+                        labelPositionsByName[name] = new List<SKPoint>();
+                    labelPositionsByName[name].Add(center);
+                }
+            }
+
+            // --- Draw place toponyms ---
+            // Create place name font based on style configuration
+            var placeLabelFont = new SKFont
+            {
+                Size = styleConfig.placeLabelStyle.fontSize,
+                Typeface = SKTypeface.FromFamilyName(
+                    SKTypeface.Default.FamilyName,
+                    styleConfig.placeLabelStyle.fontStyle == "Bold" ? SKFontStyle.Bold :
+                    styleConfig.placeLabelStyle.fontStyle == "Italic" ? SKFontStyle.Italic :
+                    SKFontStyle.Normal)
+            };
+            var placeLabelPaint = new SKPaint
+            {
+                Color = SKColor.Parse(styleConfig.placeLabelStyle.color),
+                IsAntialias = true
+            };
+
+            // Create halo paint for better readability (subtle outline around text)
+            var placeHaloPaint = new SKPaint
+            {
+                Color = SKColors.White.WithAlpha(230),
+                IsAntialias = true,
+                Style = SKPaintStyle.Stroke,
+                StrokeWidth = 2.0f
+            };            // Sort places by importance (city, town, village, hamlet, suburb, etc.)
+            string[] placeOrder = new[] { "city", "town", "village", "hamlet", "suburb", "neighbourhood", "locality" };
+            var placeTypeOrder = placeOrder
+                .Select((type, idx) => new { type, idx })
+                .ToDictionary(x => x.type, x => x.idx);
+
+            // Group places by name to detect duplicates and prioritize the most important instance
+            var placesByName = filteredPlaces.Values
+                .GroupBy(p => p.name)
+                .ToDictionary(
+                    g => g.Key,
+                    g => g.OrderBy(p => placeTypeOrder.ContainsKey(p.type) ? placeTypeOrder[p.type] : 999).First()
+                );
+
+            // Sort places by importance (city, town, village, hamlet, suburb, etc.)
+            var sortedPlaces = placesByName.Values
+                .OrderBy(p => placeTypeOrder.ContainsKey(p.type) ? placeTypeOrder[p.type] : 999)
+                .ToList();
+
+            foreach (var (lat, lon, name, type) in sortedPlaces)
+            {
+                // Convert coordinates to screen position
+                float x = (float)(((lon - minLon) * lonCorrection) * scale);
+                float y = (float)((maxLat - lat) * scale);
+
+                // Skip if name is empty
+                if (string.IsNullOrEmpty(name)) continue;                // Adjust font size and style based on place type importance
+                float fontSizeMultiplier = 1.0f;
+                SKFontStyleWeight fontWeight = SKFontStyleWeight.Normal;
+
+                if (type == "city")
+                {
+                    fontSizeMultiplier = 1.5f;
+                    fontWeight = SKFontStyleWeight.Bold;
+                }
+                else if (type == "town")
+                {
+                    fontSizeMultiplier = 1.3f;
+                    fontWeight = SKFontStyleWeight.SemiBold;
+                }
+                else if (type == "village")
+                {
+                    fontSizeMultiplier = 1.1f;
+                }
+                else if (type == "hamlet" || type == "suburb")
+                {
+                    fontSizeMultiplier = 0.9f;
+                }
+                else
+                {
+                    fontSizeMultiplier = 0.8f;
+                }
+
+                // Update font with new size and weight
+                placeLabelFont = new SKFont
+                {
+                    Size = styleConfig.placeLabelStyle.fontSize * fontSizeMultiplier,
+                    Typeface = SKTypeface.FromFamilyName(
+                        SKTypeface.Default.FamilyName,
+                        new SKFontStyle(fontWeight, SKFontStyleWidth.Normal,
+                            styleConfig.placeLabelStyle.fontStyle == "Italic" ? SKFontStyleSlant.Italic : SKFontStyleSlant.Upright)
+                    )
+                };
+
+                // Measure the text to create a bounding box
+                placeLabelFont.MeasureText(name, out SKRect textBounds, placeLabelPaint);
+
+                // Create a slightly expanded rectangle for better legibility
+                float padding = 8.0f;
+                var bgRect = new SKRect(
+                    textBounds.Left - padding,
+                    textBounds.Top - padding,
+                    textBounds.Right + padding,
+                    textBounds.Bottom + padding
+                );
+
+                // Calculate the bounds in screen coordinates
+                var aabb = new SKRect(
+                    x + bgRect.Left,
+                    y + bgRect.Top,
+                    x + bgRect.Right,
+                    y + bgRect.Bottom
+                );
+
+                // Check if the label overlaps with any existing label
+                bool overlaps = placedLabelRects.Any(r => r.IntersectsWith(aabb));
+
+                // Check if anchor is inside polygon
+                bool anchorInsidePolygon = polygonPath.Contains(x, y); if (anchorInsidePolygon && !overlaps)
+                {
+                    canvas.Save();
+                    canvas.Translate(x, y);                    // Draw text halo/outline first
+                    canvas.DrawText(name, 0, 0, SKTextAlign.Center, placeLabelFont, placeHaloPaint);
+                    // Draw the label text on top
+                    canvas.DrawText(name, 0, 0, SKTextAlign.Center, placeLabelFont, placeLabelPaint);
+                    canvas.Restore();
+
+                    placedLabelRects.Add(aabb);
+                    if (!labelPositionsByName.ContainsKey(name))
+                        labelPositionsByName[name] = new List<SKPoint>();
+                    labelPositionsByName[name].Add(new SKPoint(x, y));
+                }
+            }
+
             Console.WriteLine("Finished OSM");
 
             return bitmap.Encode(SKEncodedImageFormat.Png, 100).ToArray();

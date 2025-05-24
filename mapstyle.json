@@ -2,56 +2,74 @@
     "roadStyles": {
         "motorway": {
             "color": "#FF4500",
-            "width": 14.0,
+            "width": 16,
             "outlineColor": "#B22222"
         },
         "trunk": {
             "color": "#FFA500",
-            "width": 14,
+            "width": 16,
             "outlineColor": "#B8860B"
         },
         "primary": {
             "color": "#FFFF00",
-            "width": 12,
+            "width": 16,
             "outlineColor": "#CCCC00"
         },
         "secondary": {
             "color": "#FFFFE0",
-            "width": 10,
+            "width": 14,
             "outlineColor": "#BDB76B"
         },
         "tertiary": {
             "color": "#FFFFFF",
-            "width": 8,
+            "width": 12,
             "outlineColor": "#BCBCBC"
         },
         "residential": {
             "color": "#FFFFFF",
-            "width": 3,
+            "width": 10,
             "outlineColor": "#BCBCBC"
         },
         "service": {
             "color": "#FFFFFF",
-            "width": 1,
+            "width": 8,
             "outlineColor": "#BCBCBC"
         },
         "unclassified": {
             "color": "#FFFFFF",
-            "width": 1,
+            "width": 8,
             "outlineColor": "#BCBCBC"
         },
         "default": {
             "color": "#FFFFFF",
-            "width": 3,
+            "width": 8,
             "outlineColor": "#BCBCBC"
         }
     },
     "waterStyle": {
         "color": "#B4DCFF"
     },
+    "buildingStyle": {
+        "color": "#C0B9B0",
+        "outlineColor": "#999285"
+    },
     "labelStyle": {
         "fontSize": 28,
         "color": "#000000"
+    },
+    "waterLabelStyle": {
+        "fontSize": 22,
+        "color": "#3B78A3",
+        "fontStyle": "Italic",
+        "backgroundColor": "#FFFFFF",
+        "backgroundOpacity": 120
+    },
+    "placeLabelStyle": {
+        "fontSize": 30,
+        "color": "#333333",
+        "backgroundColor": "#FFFFFF",
+        "backgroundOpacity": 150,
+        "fontStyle": "Italic"
     },
     "borderOffset": 10,
     "backgroundColor": "#f1efe9"

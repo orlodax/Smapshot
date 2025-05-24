@@ -43,6 +43,12 @@ public static partial class Program
 
     static void ParseArgs(string[] args)
     {
+        if (args is null || args.Length == 0)
+        {
+            Console.WriteLine("No command-line arguments provided.");
+            return;
+        }
+
         // Validate command-line arguments
         if (args.Length <= 1)
         {
@@ -65,8 +71,6 @@ public static partial class Program
             Console.WriteLine("  outdoor         - Geoapify Outdoor style");
             Console.WriteLine("  satellite       - Geoapify Satellite imagery");
             Console.WriteLine("  hybrid          - Geoapify Hybrid (satellite + labels)");
-
-            return;
         }
 
         kmlFilePath = args[0];
