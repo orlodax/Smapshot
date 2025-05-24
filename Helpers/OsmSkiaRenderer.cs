@@ -144,6 +144,9 @@ public static class OsmSkiaRenderer
             var nodesInBox = nodes.Where(kv => kv.Value.lat >= minLat && kv.Value.lat <= maxLat && kv.Value.lon >= minLon && kv.Value.lon <= maxLon)
                                 .ToDictionary(kv => kv.Key, kv => kv.Value);
 
+            // Pre-filter roads: only consider roads that have at least one node within the bounding box.
+            var candidateRoads = roads.Where(r => r.nodeIds.Any(nodeId => nodesInBox.ContainsKey(nodeId))).ToList();
+
             // Build the polygon path (with internal border offset for clarity)
             var polygonPath = new SKPath();
             var polygonPixels = new List<SKPoint>();
@@ -214,9 +217,10 @@ public static class OsmSkiaRenderer
                 });
             // --- Improved road clipping: keep segments that cross or touch the polygon ---
             var clippedRoads = new List<(List<long> nodeIds, string highway, string? name)>();
-            for (int i = 0; i < roads.Count; i++)
+            // Iterate over candidateRoads instead of all roads
+            for (int i = 0; i < candidateRoads.Count; i++)
             {
-                var (nodeIds, highway, name) = roads[i];
+                var (nodeIds, highway, name) = candidateRoads[i];
                 var segmentNodeIds = new List<long>();
                 for (int j = 0; j < nodeIds.Count - 1; j++)
                 {
@@ -406,15 +410,18 @@ public static class OsmSkiaRenderer
             }
 
             // Draw waterways (lines) with stroke style
+            // Create paint object outside the loop, set variable properties inside
+            var waterwayPaint = new SKPaint
+            {
+                Color = SKColor.Parse(styleConfig.waterStyle.color).WithAlpha(230), // Assuming waterStyle.color is constant
+                Style = SKPaintStyle.Stroke,
+                IsAntialias = true
+                // StrokeWidth will be set in the loop
+            };
+
             foreach (var (nodeIds, type, name, waterwayWidth) in waterways)
             {
-                var waterwayPaint = new SKPaint
-                {
-                    Color = SKColor.Parse(styleConfig.waterStyle.color).WithAlpha(230),
-                    Style = SKPaintStyle.Stroke,
-                    StrokeWidth = waterwayWidth,
-                    IsAntialias = true
-                };
+                waterwayPaint.StrokeWidth = waterwayWidth; // Set variable property
 
                 var ids = nodeIds;
                 if (nodeIds.Count > 2 && nodeIds.First() == nodeIds.Last())
@@ -467,61 +474,82 @@ public static class OsmSkiaRenderer
                 .Select((r, i) => (r, i))
                 .OrderBy(tuple => roadTypeOrder.TryGetValue(tuple.r.highway, out int order) ? order : -1)
                 .ToList();
+
+            // Cache for road paint objects
+            var roadPaintCache = new Dictionary<string, (SKPaint? outline, SKPaint fill)>();
+
             // Draw roads (different color/width by type), clipped to the polygon using SkiaSharp
             foreach (var (road, i) in sortedRoads)
             {
                 if (!connectedRoadIndices.Contains(i)) continue; // Omit orphan roads
                 var (nodeIds, highway, name) = road;
                 var style = styleConfig.roadStyles.ContainsKey(highway) ? styleConfig.roadStyles[highway] : styleConfig.roadStyles["default"];
-                // Draw outline first (darker, thicker)
-                if (!string.IsNullOrEmpty(style.outlineColor) && style.outlineWidth > style.width)
+
+                SKPaint? outlinePaint = null;
+                SKPaint fillPaint;
+
+                // Construct a unique key for the style
+                string styleKey = $"hw:{highway}_oc:{style.outlineColor}_ow:{style.outlineWidth}_fc:{style.color}_fw:{style.width}";
+
+                if (roadPaintCache.TryGetValue(styleKey, out var paints))
                 {
-                    var outlinePaint = new SKPaint
-                    {
-                        Color = SKColor.Parse(style.outlineColor),
-                        StrokeWidth = style.outlineWidth,
-                        IsAntialias = true,
-                        Style = SKPaintStyle.Stroke
-                    };
-                    SKPath path = new();
-                    bool firstOutline = true;
-                    foreach (var nodeId in nodeIds)
-                    {
-                        if (!nodesInBox.TryGetValue(nodeId, out var coord)) continue; float x = (float)(((coord.lon - minLon) * lonCorrection) * scale);
-                        float y = (float)((maxLat - coord.lat) * scale);
-                        if (firstOutline) { path.MoveTo(x, y); firstOutline = false; }
-                        else { path.LineTo(x, y); }
-                    }
-                    canvas.Save();
-                    canvas.ClipPath(polygonPath, SKClipOperation.Intersect);
-                    canvas.DrawPath(path, outlinePaint);
-                    canvas.Restore();
+                    outlinePaint = paints.outline;
+                    fillPaint = paints.fill;
                 }
-                // Draw main road line (lighter, thinner)
-                var roadPaint = new SKPaint
+                else
                 {
-                    Color = SKColor.Parse(style.color),
-                    StrokeWidth = style.width,
-                    IsAntialias = true,
-                    Style = SKPaintStyle.Stroke
-                };
-                SKPath mainPath = new();
-                bool firstMain = true;
+                    if (!string.IsNullOrEmpty(style.outlineColor) && style.outlineWidth > 0)
+                    {
+                        outlinePaint = new SKPaint
+                        {
+                            Color = SKColor.Parse(style.outlineColor),
+                            StrokeWidth = style.outlineWidth,
+                            IsAntialias = true,
+                            Style = SKPaintStyle.Stroke,
+                            StrokeCap = SKStrokeCap.Round,
+                            StrokeJoin = SKStrokeJoin.Round
+                        };
+                    }
+
+                    fillPaint = new SKPaint
+                    {
+                        Color = SKColor.Parse(style.color),
+                        StrokeWidth = style.width,
+                        IsAntialias = true,
+                        Style = SKPaintStyle.Stroke,
+                        StrokeCap = SKStrokeCap.Round,
+                        StrokeJoin = SKStrokeJoin.Round
+                    };
+                    roadPaintCache[styleKey] = (outlinePaint, fillPaint);
+                }
+
+                SKPath roadPath = new();
+                bool firstNode = true;
                 foreach (var nodeId in nodeIds)
                 {
-                    if (!nodesInBox.TryGetValue(nodeId, out var coord)) continue; float x = (float)(((coord.lon - minLon) * lonCorrection) * scale);
-                    float y = (float)((maxLat - coord.lat) * scale);
-                    if (firstMain) { mainPath.MoveTo(x, y); firstMain = false; }
-                    else { mainPath.LineTo(x, y); }
+                    if (!nodesInBox.TryGetValue(nodeId, out var nodeCoord)) continue;
+                    float x = (float)(((nodeCoord.lon - minLon) * lonCorrection) * scale);
+                    float y = (float)((maxLat - nodeCoord.lat) * scale);
+                    if (firstNode) { roadPath.MoveTo(x, y); firstNode = false; }
+                    else { roadPath.LineTo(x, y); }
                 }
-                canvas.Save();
-                canvas.ClipPath(polygonPath, SKClipOperation.Intersect);
-                canvas.DrawPath(mainPath, roadPaint);
-                canvas.Restore();
+
+                if (!roadPath.IsEmpty)
+                {
+                    // Draw outline first (if applicable and wider)
+                    if (outlinePaint != null && style.outlineWidth > style.width)
+                    {
+                        canvas.DrawPath(roadPath, outlinePaint);
+                    }
+                    // Draw the road fill (main line)
+                    canvas.DrawPath(roadPath, fillPaint);
+                }
             }
 
-            // Restore canvas state to remove polygonPath clipping before drawing labels
-            canvas.Restore();            // Draw the 10px outline completely outside the polygon
+            // Restore canvas state to remove polygonPath clipping before drawing labels or final outline
+            canvas.Restore(); // This matches the canvas.Save() before the main ClipPath
+
+            // Draw the 10px outline completely outside the polygon
             using (var outlinePaint = new SKPaint
             {
                 Color = SKColors.Red,

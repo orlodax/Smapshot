@@ -23,24 +23,26 @@ namespace Smapshot.Helpers
 
         public RoadNetworkGraph(List<(List<long> nodeIds, string highway, string? name)> roads, HashSet<long> nodesInPolygon)
         {
-            _roads = new List<RoadInfo>();
+            _roads = new List<RoadInfo>(roads.Count); // Pre-initialize with capacity
             _nodeToRoads = new Dictionary<long, List<int>>();
             for (int i = 0; i < roads.Count; i++)
             {
                 var (nodeIds, highway, name) = roads[i];
-                // Only keep nodes inside the polygon for connectivity
-                var filteredNodeIds = nodeIds.Where(nodesInPolygon.Contains).ToList();
+                // The 'nodesInPolygon' HashSet is built from all nodeIds in the input 'roads'.
+                // Therefore, all nodes in 'nodeIds' are already guaranteed to be in 'nodesInPolygon'.
+                // The .Where(nodesInPolygon.Contains) check was redundant.
+                // We assign nodeIds directly as it's already a List<long>.
                 var info = new RoadInfo
                 {
                     Index = i,
-                    NodeIds = filteredNodeIds,
+                    NodeIds = nodeIds, // Directly use the provided nodeIds
                     Highway = highway,
                     Name = name,
                     IsAnchor = highway == "motorway" || highway == "trunk" || highway == "primary" || highway == "secondary",
                     IsConnected = false
                 };
                 _roads.Add(info);
-                foreach (var nodeId in filteredNodeIds)
+                foreach (var nodeId in info.NodeIds) // Iterate over the assigned NodeIds
                 {
                     if (!_nodeToRoads.ContainsKey(nodeId))
                         _nodeToRoads[nodeId] = new List<int>();
