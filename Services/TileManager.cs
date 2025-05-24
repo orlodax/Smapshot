@@ -73,14 +73,8 @@ public class TileManager(BoundingBoxGeo boundingBox, BoundingBoxGeo expandedBoun
 
         // Calculate zoom level based on degrees per pixel
         // At zoom level 0, one pixel is about 0.703125 degrees (180/256)
-        double zoom = Math.Round(Math.Log(0.703125 / degreesPerPixel) / Math.Log(2));
-        Console.WriteLine($"Base zoom level: {zoom}");
-
-        // Add a zoom bias to get more detail (+1 means one zoom level higher)
-        double zoomBias = 1.0;
-        Zoom = Math.Max(1, Math.Min(19, (int)Math.Round(zoom + zoomBias)));
-
-        Console.WriteLine($"Base zoom level: {zoom}, downloading at zoom level: {Zoom}");
+        Zoom = (int)Math.Round(Math.Log(0.703125 / degreesPerPixel) / Math.Log(2));
+        Console.WriteLine($"Base zoom level: {Zoom}");
     }
 
     async Task<Image<Rgba32>> DownloadAndComposeTilesAsync(

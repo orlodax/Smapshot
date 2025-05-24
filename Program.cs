@@ -44,7 +44,7 @@ public static partial class Program
     static void ParseArgs(string[] args)
     {
         // Validate command-line arguments
-        if (args.Length == 0)
+        if (args.Length <= 1)
         {
             Console.WriteLine("Usage: Smapshot <path-to-kml-file> [output-pdf-path] [--style=<map-style>]");
             Console.WriteLine("Example: Smapshot polygon.kml map.pdf --style=topo");

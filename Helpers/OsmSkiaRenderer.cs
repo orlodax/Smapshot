@@ -569,9 +569,7 @@ public static class OsmSkiaRenderer
 
                 // Restore the canvas state
                 canvas.Restore();
-            }
-
-            // --- Improved road label placement: geometry-aware, straightest segment, minimal nudge, allow multiple for long roads ---
+            }            // --- Improved road label placement: geometry-aware, straightest segment, minimal nudge, allow multiple for long roads ---
             var labelFont = new SKFont(SKTypeface.Default, styleConfig.labelStyle.fontSize);
             var labelPaint = new SKPaint { Color = SKColor.Parse(styleConfig.labelStyle.color), IsAntialias = true, IsStroke = false };
             var placedLabelRects = new List<SKRect>();
@@ -583,6 +581,24 @@ public static class OsmSkiaRenderer
             float labelSpacing = 1200f; // Minimum spacing between labels on the same road
             int maxNudgeAttempts = 12; // More nudge attempts
             float nudgeStep = 24f; // Larger nudge step
+
+            // Create reusable paint objects for label backgrounds
+            float labelCornerRadius = 4.0f; // Radius for rounded corners
+            var labelBgPaint = new SKPaint
+            {
+                Color = SKColor.Parse(styleConfig.backgroundColor),
+                Style = SKPaintStyle.Fill,
+                IsAntialias = true
+            };
+
+            var labelBorderPaint = new SKPaint
+            {
+                Color = SKColors.Gray.WithAlpha(150),
+                Style = SKPaintStyle.Stroke,
+                StrokeWidth = 1,
+                IsAntialias = true
+            };
+
             for (int i = 0; i < clippedRoads.Count; i++)
             {
                 if (!connectedRoadIndices.Contains(i)) continue;
@@ -768,14 +784,30 @@ public static class OsmSkiaRenderer
                             }
                         }
                     }
-
                     if (placed)
                     {
                         canvas.Save();
                         canvas.Translate(labelAnchor.X, labelAnchor.Y);
-                        canvas.RotateDegrees(angleDeg);
+                        canvas.RotateDegrees(angleDeg);                        // Get text measurements for the background rectangle
+                        labelFont.MeasureText(label, out SKRect textBounds, labelPaint);
+
+                        // Create a slightly expanded rectangle for better legibility
+                        float padding = 8.0f; // Padding around the text
+                        var bgRect = new SKRect(
+                            textBounds.Left - padding,
+                            textBounds.Top - padding,
+                            textBounds.Right + padding,
+                            textBounds.Bottom + padding
+                        );
+
+                        // Draw background rounded rectangle using the map's background color
+                        canvas.DrawRoundRect(bgRect, labelCornerRadius, labelCornerRadius, labelBgPaint);
+                        canvas.DrawRoundRect(bgRect, labelCornerRadius, labelCornerRadius, labelBorderPaint);
+
+                        // Draw the label text
                         canvas.DrawText(label, 0, 0, labelFont, labelPaint);
                         canvas.Restore();
+
                         placedLabelRects.Add(currentAabb);
                         if (!labelPositionsByName.ContainsKey(label))
                             labelPositionsByName[label] = new List<SKPoint>();
