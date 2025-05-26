@@ -12,7 +12,6 @@ internal static class OsmRenderHelper
     const int targetWidth = 2500;
     const int targetHeight = 3250;
     const double margin = 0.1; // 10% margin around polygon (0.0 = no margin, 0.1 = 10% margin)
-    const float BorderOffset = 15f;
 
     static readonly AppSettings appSettings = AppSettings.Instance;
 
@@ -47,7 +46,7 @@ internal static class OsmRenderHelper
         scale = GetPolygonScale();
         Console.WriteLine($"Polygon scale: {scale:F2}");
 
-        float scaleToFit = GetScaleToFit(out float polyCenterX, out float polyCenterY);
+        float scaleToFit = GetScaleToFit(polygonCoordinates, out float polyCenterX, out float polyCenterY); // MODIFIED
         Console.WriteLine($"Scale to fit: {scaleToFit:F2}");
 
         GetExpandedMapSize(out int width, out int height);
@@ -98,6 +97,9 @@ internal static class OsmRenderHelper
         double rotationAngle = KmlHelper.GetOptimalRotationAngle(polygonCoordinates);
         Console.WriteLine($"Polygon rotation angle: {rotationAngle:F2}°");
 
+        // Store current transformation state for polygon outline
+        finalCanvas.Save();
+
         // Apply transformations in order: translate to center, rotate, scale, translate to position polygon
         finalCanvas.Translate(finalCenterX, finalCenterY);
         finalCanvas.RotateDegrees((float)rotationAngle);
@@ -106,6 +108,9 @@ internal static class OsmRenderHelper
 
         // Draw the original bitmap onto the transformed canvas
         finalCanvas.DrawBitmap(bitmap, 0, 0);
+
+        // Restore the canvas state to draw polygon outline
+        finalCanvas.Restore();
     }
 
     private static void GetExpandedMapSize(out int width, out int height)
@@ -118,26 +123,82 @@ internal static class OsmRenderHelper
         Console.WriteLine($"Map dimensions: {width}x{height}");
     }
 
-    private static float GetScaleToFit(out float polyCenterX, out float polyCenterY)
+    private static float GetScaleToFit(CoordinateCollection polygonCoordinates, out float polyCenterX, out float polyCenterY)
     {
-        // Convert polygon bounding box to pixel coordinates
-        float polyPixelMinX = (float)((polyMinLon - minLon) * lonCorrection * scale);
-        float polyPixelMaxX = (float)((polyMaxLon - minLon) * lonCorrection * scale);
-        float polyPixelMinY = (float)((maxLat - polyMaxLat) * scale);
-        float polyPixelMaxY = (float)((maxLat - polyMinLat) * scale);
+        // Calculate unrotated polygon's bounding box in pixel coordinates of the source image
+        float unrotatedPolyPixelMinX = (float)((polyMinLon - minLon) * lonCorrection * scale);
+        float unrotatedPolyPixelMaxX = (float)((polyMaxLon - minLon) * lonCorrection * scale);
+        float unrotatedPolyPixelMinY = (float)((maxLat - polyMaxLat) * scale);
+        float unrotatedPolyPixelMaxY = (float)((maxLat - polyMinLat) * scale);
 
-        float polyPixelWidth = polyPixelMaxX - polyPixelMinX;
-        float polyPixelHeight = polyPixelMaxY - polyPixelMinY;
+        // Calculate polygon center in pixel coordinates (of the source image)
+        // This center is used as the pivot for transformations on the finalCanvas
+        polyCenterX = (unrotatedPolyPixelMinX + unrotatedPolyPixelMaxX) / 2f;
+        polyCenterY = (unrotatedPolyPixelMinY + unrotatedPolyPixelMaxY) / 2f;
 
-        // Calculate polygon center in pixel coordinates
-        polyCenterX = (polyPixelMinX + polyPixelMaxX) / 2f;
-        polyCenterY = (polyPixelMinY + polyPixelMaxY) / 2f;
+        // Get the optimal rotation angle for the polygon
+        double rotationAngleDegrees = KmlHelper.GetOptimalRotationAngle(polygonCoordinates);
+        double rotationAngleRadians = rotationAngleDegrees * Math.PI / 180.0;
 
-        // Calculate scale to fit polygon with margin in target size
+        List<SKPoint> rotatedPoints = [];
+        if (polygonCoordinates != null && polygonCoordinates.Count != 0)
+        {
+            foreach (var coord in polygonCoordinates)
+            {
+                // Convert geo coordinate to pixel coordinate in the source image
+                float x = (float)((coord.Longitude - minLon) * lonCorrection * scale);
+                float y = (float)((maxLat - coord.Latitude) * scale);
+
+                // Translate point so that polyCenterX, polyCenterY is the origin
+                float translatedX = x - polyCenterX;
+                float translatedY = y - polyCenterY;
+
+                // Rotate point
+                float rotatedX = (float)(translatedX * Math.Cos(rotationAngleRadians) - translatedY * Math.Sin(rotationAngleRadians));
+                float rotatedY = (float)(translatedX * Math.Sin(rotationAngleRadians) + translatedY * Math.Cos(rotationAngleRadians));
+
+                rotatedPoints.Add(new SKPoint(rotatedX, rotatedY));
+            }
+        }
+
+        float rotatedBoundingBoxWidth = 0;
+        float rotatedBoundingBoxHeight = 0;
+
+        if (rotatedPoints.Count != 0)
+        {
+            float minRotatedX = rotatedPoints.Min(p => p.X);
+            float maxRotatedX = rotatedPoints.Max(p => p.X);
+            float minRotatedY = rotatedPoints.Min(p => p.Y);
+            float maxRotatedY = rotatedPoints.Max(p => p.Y);
+
+            rotatedBoundingBoxWidth = maxRotatedX - minRotatedX;
+            rotatedBoundingBoxHeight = maxRotatedY - minRotatedY;
+        }
+
+        // If rotated points are not available, or result in zero area, fallback to unrotated dimensions
+        if (rotatedBoundingBoxWidth <= 0 || rotatedBoundingBoxHeight <= 0)
+        {
+            float unrotatedPolyPixelWidth = unrotatedPolyPixelMaxX - unrotatedPolyPixelMinX;
+            float unrotatedPolyPixelHeight = unrotatedPolyPixelMaxY - unrotatedPolyPixelMinY;
+
+            if (unrotatedPolyPixelWidth <= 0 || unrotatedPolyPixelHeight <= 0)
+            {
+                // Polygon is a point or line, or some other error; avoid division by zero
+                Console.WriteLine("Warning: Polygon has zero or negative unrotated dimensions. Defaulting scaleToFit to 1.0.");
+                return 1.0f;
+            }
+
+            float effectiveTargetWidthFallback = targetWidth * (1f - (float)margin);
+            float effectiveTargetHeightFallback = targetHeight * (1f - (float)margin);
+            Console.WriteLine("Warning: Rotated polygon dimensions are zero or invalid. Falling back to unrotated dimensions for scaling.");
+            return Math.Min(effectiveTargetWidthFallback / unrotatedPolyPixelWidth, effectiveTargetHeightFallback / unrotatedPolyPixelHeight);
+        }
+
+        // Proceed with using rotatedBoundingBoxWidth and rotatedBoundingBoxHeight
         float effectiveTargetWidth = targetWidth * (1f - (float)margin);
         float effectiveTargetHeight = targetHeight * (1f - (float)margin);
 
-        return Math.Min(effectiveTargetWidth / polyPixelWidth, effectiveTargetHeight / polyPixelHeight);
+        return Math.Min(effectiveTargetWidth / rotatedBoundingBoxWidth, effectiveTargetHeight / rotatedBoundingBoxHeight);
     }
 
     private static double GetPolygonScale()
@@ -156,37 +217,140 @@ internal static class OsmRenderHelper
         double polyScaleY = effectiveHeight / polyLatDiff;
         return Math.Min(polyScaleX, polyScaleY);
     }
-
     static void DrawPolygonOutline(float scaleToFit, CoordinateCollection polygonCoordinates, SKCanvas finalCanvas)
     {
+        float outlineWidth = appSettings.BorderOffset;
+        float offsetDistance = outlineWidth / 4.0f;
+
         using SKPaint polygonPaint = new()
         {
             Color = SKColors.Red,
             Style = SKPaintStyle.Stroke,
-            StrokeWidth = 2.0f / scaleToFit, // Adjust stroke width for scaling
+            StrokeWidth = outlineWidth,
             IsAntialias = true
         };
 
-        using SKPath polygonPath = new();
-        bool firstPathPoint = true;
+        // Calculate final canvas transformations to match the map bitmap
+        float finalCenterX = targetWidth / 2f;
+        float finalCenterY = targetHeight / 2f;
+        double rotationAngle = KmlHelper.GetOptimalRotationAngle(polygonCoordinates);
+
+        // Get polygon center in map coordinates
+        float polyPixelMinX = (float)((polyMinLon - minLon) * lonCorrection * scale);
+        float polyPixelMaxX = (float)((polyMaxLon - minLon) * lonCorrection * scale);
+        float polyPixelMinY = (float)((maxLat - polyMaxLat) * scale);
+        float polyPixelMaxY = (float)((maxLat - polyMinLat) * scale);
+        float polyCenterX = (polyPixelMinX + polyPixelMaxX) / 2f;
+        float polyCenterY = (polyPixelMinY + polyPixelMaxY) / 2f;
+
+        // Apply the same transformations that were applied to the map bitmap
+        finalCanvas.Save();
+        finalCanvas.Translate(finalCenterX, finalCenterY);
+        finalCanvas.RotateDegrees((float)rotationAngle);
+        finalCanvas.Scale(scaleToFit);
+        finalCanvas.Translate(-polyCenterX, -polyCenterY);
+
+        // Convert polygon coordinates to points in map coordinate system
+        List<SKPoint> points = [];
         foreach (var coord in polygonCoordinates)
         {
             float x = (float)((coord.Longitude - minLon) * lonCorrection * scale);
             float y = (float)((maxLat - coord.Latitude) * scale);
-
-            if (firstPathPoint)
-            {
-                polygonPath.MoveTo(x, y);
-                firstPathPoint = false;
-            }
-            else
-            {
-                polygonPath.LineTo(x, y);
-            }
+            points.Add(new SKPoint(x, y));
         }
-        polygonPath.Close();
 
-        finalCanvas.DrawPath(polygonPath, polygonPaint);
+        // Create offset polygon by moving each edge outward
+        List<SKPoint> offsetPoints = CreateOffsetPolygon(points, offsetDistance);
+
+        // Create path from offset points
+        using SKPath offsetPath = new();
+        if (offsetPoints.Count > 0)
+        {
+            offsetPath.MoveTo(offsetPoints[0]);
+            for (int i = 1; i < offsetPoints.Count; i++)
+            {
+                offsetPath.LineTo(offsetPoints[i]);
+            }
+            offsetPath.Close();
+        }
+
+        // Draw the offset outline
+        finalCanvas.DrawPath(offsetPath, polygonPaint);
+
+        // Restore canvas state
+        finalCanvas.Restore();
+    }
+
+    private static List<SKPoint> CreateOffsetPolygon(List<SKPoint> points, float offset)
+    {
+        if (points.Count < 3) return points;
+
+        List<SKPoint> offsetPoints = [];
+        int n = points.Count;
+
+        for (int i = 0; i < n; i++)
+        {
+            // Get three consecutive points
+            SKPoint prev = points[(i - 1 + n) % n];
+            SKPoint curr = points[i];
+            SKPoint next = points[(i + 1) % n];
+
+            // Calculate edge vectors
+            SKPoint edge1 = new(curr.X - prev.X, curr.Y - prev.Y);
+            SKPoint edge2 = new(next.X - curr.X, next.Y - curr.Y);            // Calculate perpendicular vectors (normals) pointing outward
+            SKPoint normal1 = new(edge1.Y, -edge1.X);
+            SKPoint normal2 = new(edge2.Y, -edge2.X);
+
+            // Normalize the normals
+            float len1 = (float)Math.Sqrt(normal1.X * normal1.X + normal1.Y * normal1.Y);
+            float len2 = (float)Math.Sqrt(normal2.X * normal2.X + normal2.Y * normal2.Y);
+
+            if (len1 > 0)
+            {
+                normal1.X /= len1;
+                normal1.Y /= len1;
+            }
+
+            if (len2 > 0)
+            {
+                normal2.X /= len2;
+                normal2.Y /= len2;
+            }
+
+            // Calculate the average normal (bisector)
+            SKPoint bisector = new(
+                (normal1.X + normal2.X) / 2,
+                (normal1.Y + normal2.Y) / 2
+            );
+
+            // Normalize the bisector
+            float bisectorLen = (float)Math.Sqrt(bisector.X * bisector.X + bisector.Y * bisector.Y);
+            if (bisectorLen > 0)
+            {
+                bisector.X /= bisectorLen;
+                bisector.Y /= bisectorLen;
+            }
+
+            // Calculate the angle between the two edges
+            float dot = normal1.X * normal2.X + normal1.Y * normal2.Y;
+            float angle = (float)Math.Acos(Math.Clamp(dot, -1.0, 1.0));
+
+            // Calculate the distance to move along the bisector
+            float bisectorDistance = offset / (float)Math.Sin(angle / 2);
+
+            // Limit the distance to prevent extremely long spikes on sharp angles
+            bisectorDistance = Math.Min(bisectorDistance, offset * 5);
+
+            // Calculate the offset point
+            SKPoint offsetPoint = new(
+                curr.X + bisector.X * bisectorDistance,
+                curr.Y + bisector.Y * bisectorDistance
+            );
+
+            offsetPoints.Add(offsetPoint);
+        }
+
+        return offsetPoints;
     }
 
     private static void DrawToponyms(SKCanvas canvas, Dictionary<long, (double lat, double lon, string name, string type)> places)
@@ -901,373 +1065,7 @@ internal static class OsmRenderHelper
     //         // 4. Update connectedRoadIndices to exclude pruned stubs
     //         connectedRoadIndices.ExceptWith(toRemove);
 
-    //         // --- Improved border stub pruning: Only keep roads reachable from interior (non-border) nodes ---
-    //         // 1. Identify interior nodes (not near border)
-    //         var interiorNodeIds = nodeIdToPoint.Keys.Except(borderNodeIds).ToHashSet();
-    //         // 2. Build node-to-road index for the main network
-    //         var nodeToRoads = new Dictionary<long, List<int>>();
-    //         foreach (var i in connectedRoadIndices)
-    //         {
-    //             var (nodeIds, _, _) = clippedRoads[i];
-    //             foreach (var nodeId in nodeIds)
-    //             {
-    //                 if (!nodeToRoads.ContainsKey(nodeId)) nodeToRoads[nodeId] = new List<int>();
-    //                 nodeToRoads[nodeId].Add(i);
-    //             }
-    //         }
-    //         // 3. BFS/DFS from all interior nodes to find all reachable roads
-    //         var reachableRoads = new HashSet<int>();
-    //         var visitedNodes = new HashSet<long>();
-    //         var stack = new Stack<long>(interiorNodeIds);
-    //         while (stack.Count > 0)
-    //         {
-    //             var nodeId = stack.Pop();
-    //             if (!visitedNodes.Add(nodeId)) continue;
-    //             if (!nodeToRoads.TryGetValue(nodeId, out var roadIndices)) continue;
-    //             foreach (var roadIdx in roadIndices)
-    //             {
-    //                 if (reachableRoads.Add(roadIdx))
-    //                 {
-    //                     var (nodeIds, _, _) = clippedRoads[roadIdx];
-    //                     foreach (var nid in nodeIds)
-    //                     {
-    //                         if (!visitedNodes.Contains(nid))
-    //                             stack.Push(nid);
-    //                     }
-    //                 }
-    //             }
-    //         }
-
-    //         // 4. Only keep roads that are reachable from the interior
-    //         connectedRoadIndices.IntersectWith(reachableRoads);
-
-    //         // Process any multipolygon water relations
-    //         foreach (var (relId, (_, relType, tagDict)) in relations)
-    //         {
-    //             if (relType == "multipolygon" &&
-    //                 ((tagDict.ContainsKey("natural") && tagDict["natural"] == "water") ||
-    //                  (tagDict.ContainsKey("landuse") && tagDict["landuse"] == "reservoir") ||
-    //                  tagDict.ContainsKey("water")))
-    //             {
-    //                 if (relationMembers.TryGetValue(relId, out var members))
-    //                 {
-    //                     string type = tagDict.TryGetValue("natural", out string? value) ? value : "reservoir";
-    //                     string? name = tagDict.TryGetValue("name", out string? value) ? value : null;
-
-    //                     foreach (var (memberId, role) in members.Where(m => m.role == "outer"))
-    //                     {
-    //                         // Find the referenced way in the source data
-    //                         var wayElement = source.FirstOrDefault(e => e.Type == OsmGeoType.Way && e.Id == memberId);
-    //                         if (wayElement is Way way && way.Nodes != null && way.Nodes.Count() > 0)
-    //                         {
-    //                             waterBodies.Add((way.Nodes.ToList(), type, name));
-    //                         }
-    //                     }
-    //                 }
-    //             }
-    //         }
-
-    //         // Draw water bodies (polygons) with fill style
-    //         var waterFillPaint = new SKPaint
-    //         {
-    //             Color = SKColor.Parse(appSettings.WaterStyle.Color),
-    //             Style = SKPaintStyle.Fill,
-    //             IsAntialias = true
-    //         };
-
-    //         // Prepare storage for water body centers for label placement
-    //         var waterLabels = new List<(string name, SKPoint center, float area)>();
-
-    //         foreach (var (nodeIds, type, nAppSettingserBodies)
-    //         {
-    //             AppSettings
-    //             SKPath path = new();
-    //             bool firstWater = true;
-    //             foreach (var nodeId in nodeIds)
-    //             {
-    //                 if (!nodesInBox.TryGetValue(nodeId, out var coord)) continue; float x = (float)(((coord.lon - minLon) * lonCorrection) * scale);
-    //                 float y = (float)((maxLat - coord.lat) * scale);
-    //                 if (firstWater) { path.MoveTo(x, y); firstWater = false; }
-    //                 else { path.LineTo(x, y); }
-    //             }
-    //             path.Close();
-
-    //             // Clip the water path to the polygon
-    //             using var clipped = new SKPath();
-    //             if (path.Op(polygonPath, SKPathOp.Intersect, clipped))
-    //             {
-    //                 canvas.DrawPath(clipped, waterFillPaint);                    // Store water body label information if it has a name
-    //                 if (!string.IsNullOrEmpty(name))
-    //                 {
-    //                     // Calculate center point and area for the water body
-    //                     clipped.GetBounds(out SKRect bounds);
-    //                     float centerX = bounds.MidX;
-    //                     float centerY = bounds.MidY;
-    //                     float area = bounds.Width * bounds.Height; // Approximate area
-
-    //                     // Only add if center is inside the clipped polygon and the water body is large enough
-    //                     if (clipped.Contains(centerX, centerY) && area > 500.0f)  // Minimum size threshold
-    //                     {
-    //                         // Try to find a better center point using visual center calculation
-    //                         bool foundBetterCenter = false;
-
-    //                         // Only attempt visual center calculation for larger water bodies
-    //                         if (area > 5000.0f)
-    //                         {
-    //                             // Sample grid points within the bounds to find the most centered point
-    //                             int gridSize = 5;
-    //                             float bestDistance = float.MaxValue;
-    //                             float bestX = centerX, bestY = centerY;
-
-    //                             for (int gx = 1; gx < gridSize; gx++)
-    //                             {
-    //                                 for (int gy = 1; gy < gridSize; gy++)
-    //                                 {
-    //                                     float testX = bounds.Left + (bounds.Width * gx / gridSize);
-    //                                     float testY = bounds.Top + (bounds.Height * gy / gridSize);
-
-    //                                     if (clipped.Contains(testX, testY))
-    //                                     {
-    //                                         // Calculate distance from boundaries
-    //                                         float distLeft = testX - bounds.Left;
-    //                                         float distRight = bounds.Right - testX;
-    //                                         float distTop = testY - bounds.Top;
-    //                                         float distBottom = bounds.Bottom - testY;
-    //                                         float minDist = Math.Min(Math.Min(distLeft, distRight), Math.Min(distTop, distBottom));
-
-    //                                         if (minDist > bestDistance)
-    //                                         {
-    //                                             bestDistance = minDist;
-    //                                             bestX = testX;
-    //                                             bestY = testY;
-    //                                             foundBetterCenter = true;
-    //                                         }
-    //                                     }
-    //                                 }
-    //                             }
-
-    //                             if (foundBetterCenter)
-    //                             {
-    //                                 centerX = bestX;
-    //                                 centerY = bestY;
-    //                             }
-    //                         }
-
-    //                         waterLabels.Add((name!, new SKPoint(centerX, centerY), area));
-    //                     }
-    //                 }
-    //             }
-    //         }
-
-    //         // Draw waterways (lines) with stroke style
-    //         // Create paint object outside the loop, set variable properties inside
-    //         var waterwayPaint = new SKPaint
-    //         {
-    //             Color = SKColor.Parse(appSettings.WaterStyle.Color).WithAlpha(230), // Assuming waterStyle.color is constant
-    //             Style = SKPaintStyle.Stroke,
-    //             IsAntialias = true
-    //             // StrokeWidth will be set in the loop
-    //         };
-
-    //         foreach (var (nodeIds, type, name, waterwayWidth) in waterways)
-    //         {
-    //             AppSettings
-    //             waterwayPaint.StrokeWidth = waterwayWidth; // Set variable property
-    //             AppSettings
-    //                             var ids = nodeIds;
-    //             if (nodeIds.Count > 2 && nodeIds.First() == nodeIds.Last())
-    //                 ids = nodeIds.Take(nodeIds.Count - 1).ToList();
-
-    //             for (int i = 0; i < ids.Count - 1; i++)
-    //             {
-    //                 if (!nodesInBox.TryGetValue(ids[i], out var coordA) || !nodesInBox.TryGetValue(ids[i + 1], out var coordB))
-    //                     continue; float xA = (float)(((coordA.lon - minLon) * lonCorrection) * scale);
-    //                 float yA = (float)((maxLat - coordA.lat) * scale);
-    //                 float xB = (float)(((coordB.lon - minLon) * lonCorrection) * scale);
-    //                 float yB = (float)((maxLat - coordB.lat) * scale);
-
-    //                 bool aInside = polygonPath.Contains(xA, yA);
-    //                 bool bInside = polygonPath.Contains(xB, yB);
-
-    //                 if (aInside && bInside)
-    //                 {
-    //                     // Both inside: draw as usual
-    //                     using var segPath = new SKPath();
-    //                     segPath.MoveTo(xA, yA);
-    //                     segPath.LineTo(xB, yB);
-    //                     canvas.DrawPath(segPath, waterwayPaint);
-    //                 }
-    //                 else if (aInside || bInside)
-    //                 {
-    //                     // One inside, one outside: interpolate intersection with polygon
-    //                     var inside = aInside ? (xA, yA) : (xB, yB);
-    //                     var outside = aInside ? (xB, yB) : (xA, yA);
-
-    //                     // Find intersection with polygon boundary
-    //                     if (TryIntersectSegmentWithPolygon(inside, outside, polygonPath, out var ix, out var iy))
-    //                     {
-    //                         using var segPath = new SKPath();
-    //                         segPath.MoveTo(inside.Item1, inside.Item2);
-    //                         segPath.LineTo(ix, iy);
-    //                         canvas.DrawPath(segPath, waterwayPaint);
-    //                     }
-    //                 }
-    //                 // else: both outside, skip
-    //             }
-    //         }
-
-    //         // --- Z-order: Draw roads from lowest to highest priority ---
-    //         string[] roadPriority = new[] { "service", "residential", "tertiary", "secondary", "primary", "trunk", "motorway" };
-    //         var roadTypeOrder = roadPriority
-    //             .Select((type, idx) => new { type, idx })
-    //             .ToDictionary(x => x.type, x => x.idx);
-    //         var sortedRoads = clippedRoads
-    //             .Select((r, i) => (r, i))
-    //             .OrderBy(tuple => roadTypeOrder.TryGetValue(tuple.r.highway, out int order) ? order : -1)
-    //             .ToList();
-
-    //         // Cache for road paint objects
-    //         var roadPaintCache = new Dictionary<string, (SKPaint? outline, SKPaint fill)>();
-
-    //         // Draw roads (different color/width by type), clipped to the polygon using SkiaSharp
-    //         foreach (var (road, i) in sortedRoads)
-    //         {
-    //             if (!connectedRoadIndices.Contains(i)) continue; // Omit orphan roads
-    //             var (nodeIds, highway, name) = road;
-    //             var style = appSettings.RoadStyles.TryGetValue(highway, out RoadStyle? value) ? value : appSettings.RoadStyles["default"];
-
-    //             SKPaint? outlinePaint = null;
-    //             SKPaint fillPaint;
-
-    //             // Construct a unique key for the style
-    //             string styleKey = $"hw:{highway}_oc:{style.OutlineColor}_ow:{style.OutlineWidth}_fc:{style.Color}_fw:{style.Width}";
-    //             AppSettingsAppSettings
-    //             if (roadPaintCache.TryGetValue(styleKey, out var paints))
-    //             {
-    //                 AppSettingsAppSettings
-    //                 outlinePaint = paints.outline;
-    //                 fillPaint = paints.fill;
-    //             }
-    //             else
-    //             {
-    //                 if (!string.IsNullOrEmpty(style.OutlineColor) && style.OutlineWidth > 0)
-    //                 {
-    //                     outlinePaint = new SKPaint
-    //                     {
-    //                         Color = SKColor.Parse(style.OutlineColor),
-    //                         StrokeWidth = style.OutlineWidth,
-    //                         IsAntialias = true,
-    //                         Style = SKPaintStyle.Stroke,
-    //                         StrokeCap = SKStrokeCap.Round,
-    //                         StrokeJoin = SKStrokeJoin.Round
-    //                     };
-    //                 }
-
-    //                 fillPaint = new SKPaint
-    //                 {
-    //                     Color = SKColor.Parse(style.Color),
-    //                     StrokeWidth = style.Width,
-    //                     IsAntialias = true,
-    //                     Style = SKPaintStyle.Stroke,
-    //                     StrokeCap = SKStrokeCap.Round,
-    //                     StrokeJoin = SKStrokeJoin.Round
-    //                 };
-    //                 roadPaintCache[styleKey] = (outlinePaint, fillPaint);
-    //             }
-
-    //             SKPath roadPath = new();
-    //             bool firstNode = true;
-    //             foreach (var nodeId in nodeIds)
-    //             {
-    //                 if (!nodesInBox.TryGetValue(nodeId, out var nodeCoord)) continue;
-    //                 float x = (float)(((nodeCoord.lon - minLon) * lonCorrection) * scale);
-    //                 float y = (float)((maxLat - nodeCoord.lat) * scale);
-    //                 if (firstNode) { roadPath.MoveTo(x, y); firstNode = false; }
-    //                 else { roadPath.LineTo(x, y); }
-    //             }
-
-    //             if (!roadPath.IsEmpty)
-    //             {
-    //                 // Draw outline first (if applicable and wider)
-    //                 if (outlinePaint != null && style.OutlineWidth > style.Width)
-    //                 {
-    //                     canvas.DrawPath(roadPath, outlinePaint);
-    //                 }
-    //                 // Draw the road fill (main line)
-    //                 canvas.DrawPath(roadPath, fillPaint);
-    //             }
-    //         }
-
-    //         // --- Draw buildings with fill style ---
-    //         var buildingFillPaint = new SKPaint
-    //         {
-    //             Color = SKColor.Parse(appSettings.BuildingStyle.Color),
-    //             Style = SKPaintStyle.Fill,
-    //             IsAntialias = true
-    //         };
-
-    //         var buildingOutlinePaint = new SKPaint
-    //         {AppSettings
-    //             Color = SKColor.Parse(appSettings.BuildingStyle.OutlineColor),
-    //             Style = SKPaintStyle.Stroke,
-    //             StrokeWidth = 1.0f,
-    //             AppSettings
-    //                 IsAntialias = true
-    //         };
-    //         AppSettings
-    //         foreach (var (nodeIds, buildingType, name) in candidateBuildings)
-    //         {
-    //             if (nodeIds.Count < 3) continue; // Need at least 3 points for a building polygon
-    //             AppSettings
-    //                             SKPath buildingPath = new SKPath();
-    //             bool firstPoint = true;
-    //             foreach (var nodeId in nodeIds)
-    //             {
-    //                 if (!nodesInBox.TryGetValue(nodeId, out var coord)) continue;
-    //                 float x = (float)(((coord.lon - minLon) * lonCorrection) * scale);
-    //                 float y = (float)((maxLat - coord.lat) * scale);
-    //                 if (firstPoint) { buildingPath.MoveTo(x, y); firstPoint = false; }
-    //                 else { buildingPath.LineTo(x, y); }
-    //             }
-    //             buildingPath.Close();
-
-    //             // Only draw if we have a valid path
-    //             if (!buildingPath.IsEmpty)
-    //             {
-    //                 // Clip the building path to the polygon
-    //                 using var clipped = new SKPath();
-    //                 if (buildingPath.Op(polygonPath, SKPathOp.Intersect, clipped))
-    //                 {
-    //                     canvas.DrawPath(clipped, buildingFillPaint);
-    //                     canvas.DrawPath(clipped, buildingOutlinePaint);
-    //                 }
-    //             }
-    //         }
-
-    //         // Restore canvas state to remove polygonPath clipping before drawing labels or final outline
-    //         canvas.Restore(); // This matches the canvas.Save() before the main ClipPath
-
-    //         // Draw the 10px outline completely outside the polygon
-    //         using (var outlinePaint = new SKPaint
-    //         {
-    //             Color = SKColors.Red,
-    //             Style = SKPaintStyle.Stroke,
-    //             StrokeWidth = 20,  // Make it thicker because we'll only see half
-    //             IsAntialias = true
-    //         })
-    //         {
-    //             // Save the canvas state
-    //             canvas.Save();
-
-    //             // Create a clipping region that excludes the polygon area
-    //             canvas.ClipPath(polygonPath, SKClipOperation.Difference);
-
-    //             // Draw the outline - only the outside portion will be visible due to clipping
-    //             canvas.DrawPath(polygonPath, outlinePaint);
-
-    //             // Restore the canvas state
-    //             canvas.Restore();
-    //         }            // --- Improved road label placement: geometry-aware, straightest segment, minimal nudge, allow multiple for long roads ---
+    //         // --- Improved road label placement: geometry-aware, straightest segment, minimal nudge, allow multiple for long roads ---
     //         var labelFont = new SKFont(SKTypeface.Default, appSettings.LabelStyle.FontSize);
     //         var labelPaint = new SKPaint { Color = SKColor.Parse(appSettings.LabelStyle.Color), IsAntialias = true, IsStroke = false };
     //         var placedLabelRects = new List<SKRect>();
