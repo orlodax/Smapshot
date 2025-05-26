@@ -6,13 +6,14 @@ namespace Smapshot.Helpers;
 
 public static class PdfGenerator
 {
-    public static void Generate(string kmlFilePath, string mapImagePath, string outputPdfPath)
+    public static void Generate(string kmlFilePath, byte[] mapImage)
     {
         // Register QuestPDF license (community edition)
         QuestPDF.Settings.License = LicenseType.Community;
 
         // Get KML file name for header
         string kmlFileName = Path.GetFileName(kmlFilePath);
+        string outputPdfPath = Path.ChangeExtension(kmlFilePath, "pdf");
 
         // Create PDF document
         Document.Create(document =>
@@ -39,7 +40,7 @@ public static class PdfGenerator
                 // Maximize the content area by giving it all available space
                 page.Content().Element(content =>
                 {
-                    content.AlignMiddle().AlignCenter().Image(mapImagePath)
+                    content.AlignMiddle().AlignCenter().Image(mapImage)
                         .FitArea()
                         .WithCompressionQuality(ImageCompressionQuality.VeryHigh); // High quality for PDF image
                 });
@@ -47,7 +48,6 @@ public static class PdfGenerator
         })
         .GeneratePdf(outputPdfPath);
 
-        File.Delete(mapImagePath);
         Console.WriteLine($"Successfully created PDF at: {outputPdfPath}");
     }
 }

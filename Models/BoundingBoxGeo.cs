@@ -22,4 +22,19 @@ public class BoundingBoxGeo(double north, double south, double east, double west
             West - lonPadding
         );
     }
+
+    /// <summary>
+    /// Expands the bounding box by a percentage of its width and height, according to which side is larger.
+    /// </summary>
+    public BoundingBoxGeo GetExpandedBoundingBox(double basePadding = 1)
+    {
+        double higherDimension = Math.Max(Width, Height);
+        double padding = basePadding * higherDimension;
+        return new BoundingBoxGeo(
+            North + padding,
+            South - padding,
+            East + padding,
+            West - padding
+        );
+    }
 }

@@ -35,149 +35,150 @@ public class MapGenerator
 
     internal async Task<string> GenerateMapAsync()
     {
-        Task<byte[]> osmRenderingTask = OsmSkiaRenderer.RenderBasicMapToPngCropped(coordinates);
+        return string.Empty;
+        // Task<byte[]> osmRenderingTask = OsmRenderHelper.RenderOsmData(coordinates, new BoundingBoxGeo());
 
-        Image<Rgba32> fullImage = await tileManager.GenerateTilesImageAsync();
-        if (fullImage is null)
-        {
-            Console.WriteLine("Error: Could not generate map image");
-            return string.Empty;
-        }
+        // Image<Rgba32> fullImage = await tileManager.GenerateTilesImageAsync();
+        // if (fullImage is null)
+        // {
+        //     Console.WriteLine("Error: Could not generate map image");
+        //     return string.Empty;
+        // }
 
-        int zoom = tileManager.Zoom;
-        (int minTileX, _, int minTileY, _) = MapHelper.GetTileBounds(expandedBoundingBox, zoom);
+        // int zoom = tileManager.Zoom;
+        // (int minTileX, _, int minTileY, _) = MapHelper.GetTileBounds(expandedBoundingBox, zoom);
 
-        var basePolygonVertices = coordinates.Select(coord =>
-        {
-            double x = MapHelper.LonToPixelX(coord.Longitude, zoom) - minTileX * TileSize;
-            double y = MapHelper.LatToPixelY(coord.Latitude, zoom) - minTileY * TileSize;
-            return new PointF((float)x, (float)y);
-        }).ToList(); var pixelPoints = basePolygonVertices; // Used by MBR code later
-        List<PointF> expandedPolygonVertices = ExpandPolygon(basePolygonVertices, 8);
+        // var basePolygonVertices = coordinates.Select(coord =>
+        // {
+        //     double x = MapHelper.LonToPixelX(coord.Longitude, zoom) - minTileX * TileSize;
+        //     double y = MapHelper.LatToPixelY(coord.Latitude, zoom) - minTileY * TileSize;
+        //     return new PointF((float)x, (float)y);
+        // }).ToList(); var pixelPoints = basePolygonVertices; // Used by MBR code later
+        // List<PointF> expandedPolygonVertices = ExpandPolygon(basePolygonVertices, 8);
 
-        await osmRenderingTask; // Ensure OSM rendering is complete before proceeding
-        byte[] osmImageBytes = osmRenderingTask.Result;
+        // await osmRenderingTask; // Ensure OSM rendering is complete before proceeding
+        // byte[] osmImageBytes = osmRenderingTask.Result;
 
-        Console.WriteLine("Applying OSM overlay and visual effects...");
-        using (MemoryStream memStream = new(osmImageBytes))
-        {
-            using Image<Rgba32> osmOverlayImage = Image.Load<Rgba32>(memStream);
-            fullImage.Mutate(ctx =>
-            {
-                // 1. Desaturate the entire fullImage (background)
-                ctx.Grayscale(1.0f).Brightness(0.8f);
+        // Console.WriteLine("Applying OSM overlay and visual effects...");
+        // using (MemoryStream memStream = new(osmImageBytes))
+        // {
+        //     using Image<Rgba32> osmOverlayImage = Image.Load<Rgba32>(memStream);
+        //     fullImage.Mutate(ctx =>
+        //     {
+        //         // 1. Desaturate the entire fullImage (background)
+        //         ctx.Grayscale(1.0f).Brightness(0.8f);
 
-                // 2. Prepare and draw the OSM overlay (foreground within polygon)
-                var targetRectOnFullImage = GetBoundingBox(expandedPolygonVertices);
+        //         // 2. Prepare and draw the OSM overlay (foreground within polygon)
+        //         var targetRectOnFullImage = GetBoundingBox(expandedPolygonVertices);
 
-                if (targetRectOnFullImage.Width > 0 && targetRectOnFullImage.Height > 0)
-                {
-                    using Image<Rgba32> resizedOsmOverlayImage = osmOverlayImage.Clone(osmCtx =>
-                    {
-                        osmCtx.Resize(new ResizeOptions
-                        {
-                            Size = targetRectOnFullImage.Size,
-                            Mode = ResizeMode.Stretch // Ensures resizedOsmOverlayImage fills the target rectangle
-                        });
-                    });
-                    ctx.SetGraphicsOptions(new GraphicsOptions { Antialias = true });
+        //         if (targetRectOnFullImage.Width > 0 && targetRectOnFullImage.Height > 0)
+        //         {
+        //             using Image<Rgba32> resizedOsmOverlayImage = osmOverlayImage.Clone(osmCtx =>
+        //             {
+        //                 osmCtx.Resize(new ResizeOptions
+        //                 {
+        //                     Size = targetRectOnFullImage.Size,
+        //                     Mode = ResizeMode.Stretch // Ensures resizedOsmOverlayImage fills the target rectangle
+        //                 });
+        //             });
+        //             ctx.SetGraphicsOptions(new GraphicsOptions { Antialias = true });
 
-                    // Draw the resized OSM image onto the full image.
-                    ctx.DrawImage(resizedOsmOverlayImage, targetRectOnFullImage.Location, 1f);
-                }
-            });
-        }
-        Console.WriteLine("OSM overlay and visual effects applied successfully!");
+        //             // Draw the resized OSM image onto the full image.
+        //             ctx.DrawImage(resizedOsmOverlayImage, targetRectOnFullImage.Location, 1f);
+        //         }
+        //     });
+        // }
+        // Console.WriteLine("OSM overlay and visual effects applied successfully!");
 
-        // --- Rotated rectangle mask crop approach with MBR ---
-        // pixelPoints is already defined above using basePolygonVertices
-        var (Center, Width, Height, Angle) = ComputeMinimumBoundingRectangle(pixelPoints);
-        float rectCenterX = Center.X;
-        float rectCenterY = Center.Y;
-        float rectW = Width; // Add 10% margin (5% each side)
-        float rectH = Height;
+        // // --- Rotated rectangle mask crop approach with MBR ---
+        // // pixelPoints is already defined above using basePolygonVertices
+        // var (Center, Width, Height, Angle) = ComputeMinimumBoundingRectangle(pixelPoints);
+        // float rectCenterX = Center.X;
+        // float rectCenterY = Center.Y;
+        // float rectW = Width; // Add 10% margin (5% each side)
+        // float rectH = Height;
 
-        if (rectW >= rectH)
-            rectH = rectW * 2400 / 3250;
-        else
-            rectW = rectH * 3250 / 2400;
+        // if (rectW >= rectH)
+        //     rectH = rectW * 2400 / 3250;
+        // else
+        //     rectW = rectH * 3250 / 2400;
 
-        rectW *= 1.1f; // Add 10% margin (5% each side)
-        rectH *= 1.1f;
+        // rectW *= 1.1f; // Add 10% margin (5% each side)
+        // rectH *= 1.1f;
 
-        float rotationAngle = Angle;
-        float radians = rotationAngle * (float)Math.PI / 180f;
-        var halfW = rectW / 2f;
-        var halfH = rectH / 2f;
+        // float rotationAngle = Angle;
+        // float radians = rotationAngle * (float)Math.PI / 180f;
+        // var halfW = rectW / 2f;
+        // var halfH = rectH / 2f;
 
-        // 3. Create a mask image (same size as fullImage), draw a white filled rectangle rotated by rotationAngle
-        using Image<Rgba32> mask = new(fullImage.Width, fullImage.Height, Color.Black);
-        var corners = new[] {
-            new PointF(-halfW, -halfH),
-            new PointF(halfW, -halfH),
-            new PointF(halfW, halfH),
-            new PointF(-halfW, halfH)
-        };
-        var rotatedCorners = corners.Select(p =>
-        {
-            float x = p.X * (float)Math.Cos(radians) - p.Y * (float)Math.Sin(radians) + rectCenterX;
-            float y = p.X * (float)Math.Sin(radians) + p.Y * (float)Math.Cos(radians) + rectCenterY;
-            return new PointF(x, y);
-        }).ToArray();
-        mask.Mutate(ctx => ctx.FillPolygon(Color.White, rotatedCorners));
+        // // 3. Create a mask image (same size as fullImage), draw a white filled rectangle rotated by rotationAngle
+        // using Image<Rgba32> mask = new(fullImage.Width, fullImage.Height, Color.Black);
+        // var corners = new[] {
+        //     new PointF(-halfW, -halfH),
+        //     new PointF(halfW, -halfH),
+        //     new PointF(halfW, halfH),
+        //     new PointF(-halfW, halfH)
+        // };
+        // var rotatedCorners = corners.Select(p =>
+        // {
+        //     float x = p.X * (float)Math.Cos(radians) - p.Y * (float)Math.Sin(radians) + rectCenterX;
+        //     float y = p.X * (float)Math.Sin(radians) + p.Y * (float)Math.Cos(radians) + rectCenterY;
+        //     return new PointF(x, y);
+        // }).ToArray();
+        // mask.Mutate(ctx => ctx.FillPolygon(Color.White, rotatedCorners));
 
-        // 4. Cut out the region from the original image using the mask
-        Image<Rgba32> cutout = new((int)rectW, (int)rectH);
-        cutout.Mutate(ctx => ctx.Clear(Color.Transparent));
-        for (int y = 0; y < (int)rectH; y++)
-        {
-            for (int x = 0; x < (int)rectW; x++)
-            {
-                float relX = x - halfW;
-                float relY = y - halfH;
-                float srcX = relX * (float)Math.Cos(radians) - relY * (float)Math.Sin(radians) + rectCenterX;
-                float srcY = relX * (float)Math.Sin(radians) + relY * (float)Math.Cos(radians) + rectCenterY;
-                int ix = (int)Math.Round(srcX);
-                int iy = (int)Math.Round(srcY);
-                if (ix >= 0 && ix < fullImage.Width && iy >= 0 && iy < fullImage.Height)
-                {
-                    if (mask[ix, iy].R > 128)
-                    {
-                        cutout[x, y] = fullImage[ix, iy];
-                    }
-                }
-            }
-        }
-        //mask.Save("mask.png");
-        mask.Dispose();
+        // // 4. Cut out the region from the original image using the mask
+        // Image<Rgba32> cutout = new((int)rectW, (int)rectH);
+        // cutout.Mutate(ctx => ctx.Clear(Color.Transparent));
+        // for (int y = 0; y < (int)rectH; y++)
+        // {
+        //     for (int x = 0; x < (int)rectW; x++)
+        //     {
+        //         float relX = x - halfW;
+        //         float relY = y - halfH;
+        //         float srcX = relX * (float)Math.Cos(radians) - relY * (float)Math.Sin(radians) + rectCenterX;
+        //         float srcY = relX * (float)Math.Sin(radians) + relY * (float)Math.Cos(radians) + rectCenterY;
+        //         int ix = (int)Math.Round(srcX);
+        //         int iy = (int)Math.Round(srcY);
+        //         if (ix >= 0 && ix < fullImage.Width && iy >= 0 && iy < fullImage.Height)
+        //         {
+        //             if (mask[ix, iy].R > 128)
+        //             {
+        //                 cutout[x, y] = fullImage[ix, iy];
+        //             }
+        //         }
+        //     }
+        // }
+        // //mask.Save("mask.png");
+        // mask.Dispose();
 
-        // 5. Optionally, rotate to portrait (A4) orientation
-        Image<Rgba32> portrait;
-        if (cutout.Width > cutout.Height)
-        {
-            // Rotate 90 degrees to make the longer side vertical
-            portrait = cutout.Clone(ctx => ctx.Rotate(90));
-        }
-        else
-        {
-            portrait = cutout.Clone();
-        }
-        //cutout.Save("cutout.png");
-        cutout.Dispose();
-        //fullImage.Save("full_image.png");
-        fullImage.Dispose();
+        // // 5. Optionally, rotate to portrait (A4) orientation
+        // Image<Rgba32> portrait;
+        // if (cutout.Width > cutout.Height)
+        // {
+        //     // Rotate 90 degrees to make the longer side vertical
+        //     portrait = cutout.Clone(ctx => ctx.Rotate(90));
+        // }
+        // else
+        // {
+        //     portrait = cutout.Clone();
+        // }
+        // //cutout.Save("cutout.png");
+        // cutout.Dispose();
+        // //fullImage.Save("full_image.png");
+        // fullImage.Dispose();
 
-        // 6. Optionally, scale for readability
-        // float zoomFactor = 1.5f;
-        // var scaled = portrait.Clone(ctx => ctx.Resize((int)(portrait.Width * zoomFactor), (int)(portrait.Height * zoomFactor)));
+        // // 6. Optionally, scale for readability
+        // // float zoomFactor = 1.5f;
+        // // var scaled = portrait.Clone(ctx => ctx.Resize((int)(portrait.Width * zoomFactor), (int)(portrait.Height * zoomFactor)));
+        // // portrait.Dispose();
+
+        // // Save the map image temporarily
+        // string tempImagePath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"map_{Guid.NewGuid()}.png");
+        // portrait.Save(tempImagePath);
         // portrait.Dispose();
 
-        // Save the map image temporarily
-        string tempImagePath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"map_{Guid.NewGuid()}.png");
-        portrait.Save(tempImagePath);
-        portrait.Dispose();
-
-        return tempImagePath;
+        // return tempImagePath;
     }
 
     static List<PointF> ExpandPolygon(List<PointF> points, ushort expandBy)
