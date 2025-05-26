@@ -1117,29 +1117,49 @@ internal class OsmRenderEngine(XmlOsmStreamSource? osmData, BoundingBoxGeo expan
         // Cache for road paint objects
         Dictionary<string, (SKPaint? outline, SKPaint fill)> roadPaintCache = [];
 
-        foreach ((List<long> nodeIds, string highway, string? name, string? roadRef) in sortedRoads)
-        {
-            RoadStyle style = appSettings.RoadStyles.TryGetValue(highway, out RoadStyle? value) ? value : appSettings.RoadStyles["default"];
+        // Group roads by style key
+        var roadsByStyle = new Dictionary<string, List<(List<long> nodeIds, RoadStyle style)>>();
 
+        foreach (var road in sortedRoads)
+        {
+            RoadStyle style = appSettings.RoadStyles.TryGetValue(road.highway, out RoadStyle? value) ? value : appSettings.RoadStyles["default"];
+            // Construct style key for grouping and paint caching
+            // Key is now based only on visual style properties, not the highway type itself.
+            string styleKey = $"oc:{style.OutlineColor}_ow:{style.OutlineWidth}_fc:{style.Color}_fw:{style.Width}";
+
+            if (!roadsByStyle.TryGetValue(styleKey, out var roadList))
+            {
+                roadList = [];
+                roadsByStyle[styleKey] = roadList;
+            }
+            roadList.Add((road.nodeIds, style));
+        }
+
+        foreach (var styleGroupEntry in roadsByStyle)
+        {
+            string styleKey = styleGroupEntry.Key;
+            List<(List<long> nodeIds, RoadStyle style)> roadsInGroup = styleGroupEntry.Value;
+
+            if (roadsInGroup.Count == 0) continue;
+
+            // All roads in this group share the same style object instance or value.
+            RoadStyle currentStyle = roadsInGroup[0].style;
             SKPaint? outlinePaint = null;
             SKPaint fillPaint;
 
-            // Construct style key for paint caching
-            string styleKey = $"hw:{highway}_oc:{style.OutlineColor}_ow:{style.OutlineWidth}_fc:{style.Color}_fw:{style.Width}";
-
-            if (roadPaintCache.TryGetValue(styleKey, out (SKPaint? outline, SKPaint fill) paints))
+            if (roadPaintCache.TryGetValue(styleKey, out var paints))
             {
                 outlinePaint = paints.outline;
                 fillPaint = paints.fill;
             }
             else
             {
-                if (!string.IsNullOrEmpty(style.OutlineColor) && style.OutlineWidth > 0)
+                if (!string.IsNullOrEmpty(currentStyle.OutlineColor) && currentStyle.OutlineWidth > 0)
                 {
                     outlinePaint = new SKPaint
                     {
-                        Color = SKColor.Parse(style.OutlineColor),
-                        StrokeWidth = style.OutlineWidth,
+                        Color = SKColor.Parse(currentStyle.OutlineColor),
+                        StrokeWidth = currentStyle.OutlineWidth,
                         IsAntialias = true,
                         Style = SKPaintStyle.Stroke,
                         StrokeCap = SKStrokeCap.Round,
@@ -1149,8 +1169,8 @@ internal class OsmRenderEngine(XmlOsmStreamSource? osmData, BoundingBoxGeo expan
 
                 fillPaint = new SKPaint
                 {
-                    Color = SKColor.Parse(style.Color),
-                    StrokeWidth = style.Width,
+                    Color = SKColor.Parse(currentStyle.Color),
+                    StrokeWidth = currentStyle.Width,
                     IsAntialias = true,
                     Style = SKPaintStyle.Stroke,
                     StrokeCap = SKStrokeCap.Round,
@@ -1159,25 +1179,37 @@ internal class OsmRenderEngine(XmlOsmStreamSource? osmData, BoundingBoxGeo expan
                 roadPaintCache[styleKey] = (outlinePaint, fillPaint);
             }
 
-            SKPath roadPath = new();
-            bool firstNode = true;
-            foreach (long nodeId in nodeIds)
+            SKPath combinedRoadPath = new();
+            foreach (var (nodeIds, _) in roadsInGroup) // Style is already known for the group
             {
-                if (!nodes.TryGetValue(nodeId, out (double lat, double lon, string? name) nodeCoord)) continue;
-                SKPoint point = GeoToPixel(nodeCoord.lon, nodeCoord.lat, maxLat, minLon, lonCorrection, scale);
+                bool firstNodeInSegment = true;
+                foreach (long nodeId in nodeIds)
+                {
+                    if (!nodes.TryGetValue(nodeId, out (double lat, double lon, string? name) nodeCoord)) continue;
+                    SKPoint point = GeoToPixel(nodeCoord.lon, nodeCoord.lat, maxLat, minLon, lonCorrection, scale);
 
-                if (firstNode) { roadPath.MoveTo(point); firstNode = false; }
-                else { roadPath.LineTo(point); }
+                    if (firstNodeInSegment)
+                    {
+                        combinedRoadPath.MoveTo(point);
+                        firstNodeInSegment = false;
+                    }
+                    else
+                    {
+                        combinedRoadPath.LineTo(point);
+                    }
+                }
             }
 
-            if (!roadPath.IsEmpty)
+            if (!combinedRoadPath.IsEmpty)
             {
-                // Draw outline first if applicable and wider
-                if (outlinePaint != null && style.OutlineWidth > style.Width)
-                    canvas.DrawPath(roadPath, outlinePaint);
+                // Draw outline first if applicable and wider than the fill
+                if (outlinePaint != null && currentStyle.OutlineWidth > currentStyle.Width)
+                {
+                    canvas.DrawPath(combinedRoadPath, outlinePaint);
+                }
 
-                // Draw the road fill
-                canvas.DrawPath(roadPath, fillPaint);
+                // Draw the road fill (which is also a stroke)
+                canvas.DrawPath(combinedRoadPath, fillPaint);
             }
         }
     }
