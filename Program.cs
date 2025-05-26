@@ -27,7 +27,17 @@ public static partial class Program
         try
         {
             string json = File.ReadAllText("appSettings.json");
-            AppSettings = JsonSerializer.Deserialize<AppSettings>(json) ?? new AppSettings();
+            AppSettings? appSettings =
+                JsonSerializer.Deserialize<AppSettings>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            if (appSettings == null)
+            {
+                Console.WriteLine("Failed to deserialize appSettings.json. Using default settings.");
+                appSettings = new AppSettings();
+            }
+            else
+            {
+                AppSettings.UpdateInstance(appSettings);
+            }
         }
         catch
         {

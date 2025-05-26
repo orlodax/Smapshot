@@ -1,7 +1,12 @@
+using System.Numerics;
 using OsmSharp;
 using OsmSharp.Streams;
 using OsmSharp.Tags;
 using SharpKml.Dom;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Drawing.Processing;
+using SixLabors.ImageSharp.PixelFormats;
+using SixLabors.ImageSharp.Processing;
 using SkiaSharp;
 using Smapshot.Models;
 
@@ -104,13 +109,14 @@ internal static class OsmRenderHelper
         finalCanvas.Translate(finalCenterX, finalCenterY);
         finalCanvas.RotateDegrees((float)rotationAngle);
         finalCanvas.Scale(scaleToFit);
-        finalCanvas.Translate(-polyCenterX, -polyCenterY);
-
-        // Draw the original bitmap onto the transformed canvas
+        finalCanvas.Translate(-polyCenterX, -polyCenterY);        // Draw the original bitmap onto the transformed canvas
         finalCanvas.DrawBitmap(bitmap, 0, 0);
 
         // Restore the canvas state to draw polygon outline
         finalCanvas.Restore();
+
+        // Apply desaturation and brightness reduction to pixels outside the polygon
+        ApplyPolygonMask(polygonCoordinates, scaleToFit, polyCenterX, polyCenterY, finalBitmap, rotationAngle);
     }
 
     private static void GetExpandedMapSize(out int width, out int height)
@@ -220,7 +226,7 @@ internal static class OsmRenderHelper
     static void DrawPolygonOutline(float scaleToFit, CoordinateCollection polygonCoordinates, SKCanvas finalCanvas)
     {
         float outlineWidth = appSettings.BorderOffset;
-        float offsetDistance = outlineWidth / 4.0f;
+        float offsetDistance = outlineWidth / 6.0f;
 
         using SKPaint polygonPaint = new()
         {
@@ -283,7 +289,8 @@ internal static class OsmRenderHelper
 
     private static List<SKPoint> CreateOffsetPolygon(List<SKPoint> points, float offset)
     {
-        if (points.Count < 3) return points;
+        if (points.Count < 3)
+            return points;
 
         List<SKPoint> offsetPoints = [];
         int n = points.Count;
@@ -349,8 +356,101 @@ internal static class OsmRenderHelper
 
             offsetPoints.Add(offsetPoint);
         }
-
         return offsetPoints;
+    }
+    private static void ApplyPolygonMask(CoordinateCollection polygonCoordinates, float scaleToFit, float polyCenterX, float polyCenterY, SKBitmap finalBitmap, double rotationAngle)
+    {
+        // Convert SKBitmap to SixLabors Image for faster processing
+        byte[] imageBytes;
+        using (var data = finalBitmap.Encode(SKEncodedImageFormat.Png, 100))
+        {
+            imageBytes = data.ToArray();
+        }
+
+        using var image = SixLabors.ImageSharp.Image.Load<Rgba32>(imageBytes);
+
+        // Calculate final canvas transformations
+        float finalCenterX = targetWidth / 2f;
+        float finalCenterY = targetHeight / 2f;        // Convert polygon coordinates to final canvas coordinates
+        List<SixLabors.ImageSharp.PointF> transformedPoints = [];
+
+        foreach (var coord in polygonCoordinates)
+        {
+            // Convert geo coordinate to pixel coordinate in the source image
+            float x = (float)((coord.Longitude - minLon) * lonCorrection * scale);
+            float y = (float)((maxLat - coord.Latitude) * scale);
+
+            // Apply the same transformations that were applied to the map bitmap
+            // Translate to polygon center
+            float translatedX = x - polyCenterX;
+            float translatedY = y - polyCenterY;
+
+            // Scale
+            float scaledX = translatedX * scaleToFit;
+            float scaledY = translatedY * scaleToFit;
+
+            // Rotate around origin
+            double rotationRadians = rotationAngle * Math.PI / 180.0;
+            float rotatedX = (float)(scaledX * Math.Cos(rotationRadians) - scaledY * Math.Sin(rotationRadians));
+            float rotatedY = (float)(scaledX * Math.Sin(rotationRadians) + scaledY * Math.Cos(rotationRadians));
+
+            // Translate to final position
+            float finalX = rotatedX + finalCenterX;
+            float finalY = rotatedY + finalCenterY;
+
+            transformedPoints.Add(new SixLabors.ImageSharp.PointF(finalX, finalY));
+        }
+
+        // Create a mask image - white inside polygon, black outside
+        using var mask = new SixLabors.ImageSharp.Image<L8>(image.Width, image.Height);
+        mask.Mutate(ctx => ctx.Clear(SixLabors.ImageSharp.Color.Black));
+
+        if (transformedPoints.Count > 0)
+        {
+            mask.Mutate(ctx =>
+            {
+                var polygon = new SixLabors.ImageSharp.Drawing.Polygon(transformedPoints.ToArray());
+                ctx.Fill(SixLabors.ImageSharp.Color.White, polygon);
+            });
+        }
+
+        // Apply effects: desaturate and reduce brightness for areas outside the polygon
+        // First create a desaturated/dimmed version of the entire image
+        using var processedImage = image.Clone();
+        processedImage.Mutate(ctx =>
+        {
+            ctx.Grayscale().Brightness(0.8f); // Convert to grayscale and reduce brightness
+        });
+
+        // Now blend based on the mask: use original inside polygon, processed outside
+        image.Mutate(ctx =>
+        {
+            // Process pixel by pixel using the mask
+            for (int y = 0; y < image.Height; y++)
+            {
+                for (int x = 0; x < image.Width; x++)
+                {
+                    var maskPixel = mask[x, y];
+                    if (maskPixel.PackedValue == 0) // Black = outside polygon
+                    {
+                        image[x, y] = processedImage[x, y];
+                    }
+                    // For white pixels (inside polygon), keep original
+                }
+            }
+        });
+
+        // Convert back to SKBitmap
+        using var outputStream = new MemoryStream();
+        image.SaveAsPng(outputStream);
+        outputStream.Position = 0;
+
+        using var newBitmap = SKBitmap.Decode(outputStream.ToArray());
+
+        // Copy the processed pixels back to the original bitmap
+        using var canvas = new SKCanvas(finalBitmap);
+        canvas.Clear();
+        canvas.DrawBitmap(newBitmap, 0, 0);
     }
 
     private static void DrawToponyms(SKCanvas canvas, Dictionary<long, (double lat, double lon, string name, string type)> places)
