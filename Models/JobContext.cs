@@ -44,7 +44,7 @@ internal class JobContext(string kmlFilePath)
 
         OsmDownloader osmDownloader = new(boundingBox.GetExpandedBoundingBox());
         osmData = await osmDownloader.DownloadRegion();
-        Console.WriteLine($"OSM data downloaded for bounding box: N{boundingBox.North}, S{boundingBox.South}, E{boundingBox.East}, W{boundingBox.West}");
+        Console.WriteLine($"{kmlFilePath} OSM data downloaded for bounding box: N{boundingBox.North}, S{boundingBox.South}, E{boundingBox.East}, W{boundingBox.West}");
     }
     internal void RenderOsmData()
     {
@@ -53,7 +53,7 @@ internal class JobContext(string kmlFilePath)
 
         OsmRenderEngine osmRenderEngine = new(osmData, boundingBox.GetExpandedBoundingBox(), kmlHelper);
         fullMapImage = osmRenderEngine.RenderOsmData();
-        Console.WriteLine("OSM full map rendering completed.");
+        Console.WriteLine($"{kmlFilePath} OSM full map rendering completed.");
     }
 
     internal void ExportMapToPdf()

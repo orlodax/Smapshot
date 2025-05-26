@@ -14,7 +14,7 @@ internal class SmapshotManager
         {
             // If a directory is provided, look for a .kml file in it
             kmlFilePaths = Directory.GetFiles(inputPath, "*.kml");
-            if (kmlFilePaths.Any())
+            if (!kmlFilePaths.Any())
             {
                 Console.WriteLine($"No .kml files found in directory: {inputPath}");
                 return;

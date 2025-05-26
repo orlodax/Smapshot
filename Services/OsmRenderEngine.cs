@@ -97,7 +97,6 @@ internal class OsmRenderEngine(XmlOsmStreamSource? osmData, BoundingBoxGeo expan
         return finalData.ToArray();
     }
 
-
     void DrawFinalCanvas(float scaleToFit, float polyCenterX, float polyCenterY, SKBitmap bitmap, SKBitmap finalBitmap, SKCanvas finalCanvas)
     {
         // Fill with background color
@@ -193,17 +192,9 @@ internal class OsmRenderEngine(XmlOsmStreamSource? osmData, BoundingBoxGeo expan
         {
             // Process pixel by pixel using the mask
             for (int y = 0; y < image.Height; y++)
-            {
                 for (int x = 0; x < image.Width; x++)
-                {
-                    var maskPixel = mask[x, y];
-                    if (maskPixel.PackedValue == 0) // Black = outside polygon
-                    {
+                    if (mask[x, y].PackedValue == 0) // Black = outside polygon
                         image[x, y] = processedImage[x, y];
-                    }
-                    // For white pixels (inside polygon), keep original
-                }
-            }
         });
 
         // Convert back to SKBitmap
@@ -373,9 +364,8 @@ internal class OsmRenderEngine(XmlOsmStreamSource? osmData, BoundingBoxGeo expan
         {
             offsetPath.MoveTo(offsetPoints[0]);
             for (int i = 1; i < offsetPoints.Count; i++)
-            {
                 offsetPath.LineTo(offsetPoints[i]);
-            }
+
             offsetPath.Close();
         }
 
@@ -457,7 +447,6 @@ internal class OsmRenderEngine(XmlOsmStreamSource? osmData, BoundingBoxGeo expan
         }
         return offsetPoints;
     }
-
     void DrawRoadLabels(
         SKCanvas finalCanvas,
         Dictionary<long, (double lat, double lon, string? name)> nodes,
@@ -466,6 +455,8 @@ internal class OsmRenderEngine(XmlOsmStreamSource? osmData, BoundingBoxGeo expan
         float polyCenterX,
         float polyCenterY)
     {
+        // Clear any previously tracked labels
+        LabelUtilities.ClearLabelRects();
         // Create font for road labels
         SKFont roadLabelFont = new()
         {
@@ -593,10 +584,9 @@ internal class OsmRenderEngine(XmlOsmStreamSource? osmData, BoundingBoxGeo expan
 
                 // Check if this is a ref-only label
                 if (!string.IsNullOrEmpty(roadRef) && (string.IsNullOrEmpty(labelKey) || labelKey == roadRef))
-                {
                     isRefOnly = true;
-                }
-            }// Skip extremely short roads, but be more lenient for important road types
+            }
+            // Skip extremely short roads, but be more lenient for important road types
             float lengthThreshold = 30f; // Base threshold
 
             // Adjust threshold based on road importance - show more important roads even if shorter
@@ -659,14 +649,48 @@ internal class OsmRenderEngine(XmlOsmStreamSource? osmData, BoundingBoxGeo expan
             if (length < textBounds.Width * 1.2) continue;
 
             // Draw the label centered at the middle segment
-            SKPoint middlePoint = new((p1.X + p2.X) / 2, (p1.Y + p2.Y) / 2);
-
-            finalCanvas.Save();
+            SKPoint middlePoint = new((p1.X + p2.X) / 2, (p1.Y + p2.Y) / 2); finalCanvas.Save();
             finalCanvas.Translate(middlePoint.X, middlePoint.Y);
             finalCanvas.RotateDegrees(angle);            // Create a properly centered background rectangle
             // Text will be centered at (0,0) in the translated/rotated coordinates
             float textHeight = textBounds.Height;
-            float textWidth = textBounds.Width;
+            float textWidth = textBounds.Width;            // Calculate the position of this label in final canvas coordinates
+            // for collision detection
+            float centerX = targetWidth / 2f;
+            float centerY = targetHeight / 2f;
+
+            // Get coordinates of the middle point
+            SKPoint middlePosition = new((p1.X + p2.X) / 2, (p1.Y + p2.Y) / 2);
+
+            // Convert the middle point to final canvas coordinates for collision detection
+            // First transform the screen coordinates back to geo coordinates (approximate)
+            double pixelLon = middlePosition.X / (lonCorrection * scale) + minLon;
+            double pixelLat = maxLat - (middlePosition.Y / scale);
+
+            // Now convert to final canvas coordinates
+            SKPoint finalPoint = LabelUtilities.GeoToFinalCanvasPoint(
+                pixelLon, pixelLat,
+                minLon, maxLat, lonCorrection, scale,
+                polyCenterX, polyCenterY,
+                rotationAngle, scaleToFit,
+                centerX, centerY
+            );
+
+            // Create a rectangle that approximates the rotated text
+            // For simplicity, we use a slightly larger rectangle to account for rotation
+            float padding = 10.0f; // Additional padding
+            float labelWidth = textWidth + appSettings.RoadLabelStyle.PaddingX * 2 + padding;
+            float labelHeight = textHeight + appSettings.RoadLabelStyle.PaddingY * 2 + padding;
+
+            SKRect labelRect = new(
+                finalPoint.X - labelWidth / 2,
+                finalPoint.Y - labelHeight / 2,
+                finalPoint.X + labelWidth / 2,
+                finalPoint.Y + labelHeight / 2
+            );
+
+            // Add this label to the tracking list
+            LabelUtilities.AddLabelRect(labelRect);
 
             // Get proper text metrics for vertical centering
             // In typography, text is usually positioned with its baseline at y=0
@@ -695,7 +719,6 @@ internal class OsmRenderEngine(XmlOsmStreamSource? osmData, BoundingBoxGeo expan
 
         // Restore the canvas state
         finalCanvas.Restore();
-
     }
 
     void DrawWaterLabels(
@@ -773,9 +796,7 @@ internal class OsmRenderEngine(XmlOsmStreamSource? osmData, BoundingBoxGeo expan
 
             // Only label water bodies of significant size
             if (area > 500.0f)
-            {
                 waterLabels.Add((name!, new SKPoint(centerX, centerY), area));
-            }
         }
 
         // Sort water labels by area (largest first)
@@ -817,7 +838,7 @@ internal class OsmRenderEngine(XmlOsmStreamSource? osmData, BoundingBoxGeo expan
 
         // Restore the canvas state
         finalCanvas.Restore();
-    }
+    }    // Helper methods moved to LabelUtilities class
 
     void DrawToponyms(
         SKCanvas finalCanvas,
@@ -862,9 +883,7 @@ internal class OsmRenderEngine(XmlOsmStreamSource? osmData, BoundingBoxGeo expan
             .ToDictionary(
                 g => g.Key,
                 g => g.OrderBy(p => placeTypeOrder.TryGetValue(p.type, out int value) ? value : 999).First()
-            );
-
-        // Sort places by importance (city, town, village, hamlet, suburb, etc.)
+            );        // Sort places by importance (city, town, village, hamlet, suburb, etc.)
         var sortedPlaces = placesByName.Values
             .OrderBy(p => placeTypeOrder.TryGetValue(p.type, out int value) ? value : 999)
             .ToList();
@@ -909,13 +928,9 @@ internal class OsmRenderEngine(XmlOsmStreamSource? osmData, BoundingBoxGeo expan
                 fontWeight = SKFontStyleWeight.SemiBold;
             }
             else if (type == "hamlet" || type == "suburb")
-            {
                 fontSizeMultiplier = 0.9f;
-            }
             else
-            {
                 fontSizeMultiplier = 0.8f;
-            }
 
             // Update font with new size and weight
             placeLabelFont = new SKFont
@@ -931,15 +946,118 @@ internal class OsmRenderEngine(XmlOsmStreamSource? osmData, BoundingBoxGeo expan
             };
 
             // Measure the text to create a bounding box
-            placeLabelFont.MeasureText(name, out SKRect textBounds, placeLabelPaint);
+            placeLabelFont.MeasureText(name, out SKRect textBounds, placeLabelPaint);            // Calculate the position of this label in final canvas coordinates
+            // This is for accurate collision detection with previously drawn labels
+            SKPoint finalPoint = LabelUtilities.GeoToFinalCanvasPoint(
+                lon, lat,
+                minLon, maxLat, lonCorrection, scale,
+                polyCenterX, polyCenterY,
+                rotationAngle, scaleToFit,
+                finalCenterX, finalCenterY);
 
-            finalCanvas.Save();
-            finalCanvas.Translate(x, y);
-            // Draw text halo/outline first
-            finalCanvas.DrawText(name, 0, 0, SKTextAlign.Center, placeLabelFont, placeHaloPaint);
-            // Draw the label text on top
-            finalCanvas.DrawText(name, 0, 0, SKTextAlign.Center, placeLabelFont, placeLabelPaint);
-            finalCanvas.Restore();
+            // Create rectangle for collision detection in final canvas coordinates
+            // The text is centered around the point, so adjust the rectangle accordingly
+            SKRect labelRect = new(
+                finalPoint.X - textBounds.Width / 2 - placeHaloPaint.StrokeWidth,
+                finalPoint.Y - textBounds.Height / 2 - placeHaloPaint.StrokeWidth,
+                finalPoint.X + textBounds.Width / 2 + placeHaloPaint.StrokeWidth,
+                finalPoint.Y + textBounds.Height / 2 + placeHaloPaint.StrokeWidth
+            );            // Skip drawing this label if it would overlap with another label
+            if (LabelUtilities.RectangleOverlapsWithExistingLabels(labelRect))
+            {
+                // Skip more aggressively for less important places
+                if (type != "city" && type != "town")
+                {
+                    continue;
+                }
+
+                // For important places, try alternate positions
+                bool placed = false;
+
+                // Try positions in 8 directions around the point
+                float[] offsets = { 1.0f, 1.5f, 2.0f };  // Multipliers for text height
+
+                foreach (float offsetFactor in offsets)
+                {
+                    // Skip trying new positions for low-importance places to avoid cluttering
+                    if (offsetFactor > 1.0f && (type == "hamlet" || type == "suburb" || type == "neighbourhood" || type == "locality"))
+                    {
+                        break;
+                    }
+
+                    // Try 8 positions around the point
+                    (float dx, float dy)[] directions =
+                    {
+                        (0, -1), (1, -1), (1, 0), (1, 1),  // top, top-right, right, bottom-right
+                        (0, 1), (-1, 1), (-1, 0), (-1, -1)  // bottom, bottom-left, left, top-left
+                    };
+
+                    float distance = textBounds.Height * offsetFactor;
+
+                    foreach (var (dx, dy) in directions)
+                    {
+                        SKPoint offsetPoint = new(finalPoint.X + dx * distance, finalPoint.Y + dy * distance);
+
+                        SKRect offsetRect = new(
+                            offsetPoint.X - textBounds.Width / 2 - placeHaloPaint.StrokeWidth,
+                            offsetPoint.Y - textBounds.Height / 2 - placeHaloPaint.StrokeWidth,
+                            offsetPoint.X + textBounds.Width / 2 + placeHaloPaint.StrokeWidth,
+                            offsetPoint.Y + textBounds.Height / 2 + placeHaloPaint.StrokeWidth
+                        );
+
+                        if (!LabelUtilities.RectangleOverlapsWithExistingLabels(offsetRect))
+                        {
+                            // Draw at this offset position
+                            finalCanvas.Save();
+                            finalCanvas.Translate(x, y);
+
+                            // Calculate the offset in the map coordinate system
+                            // Transform the offset back to map coordinates
+                            float mapDx = dx * distance / scaleToFit;
+                            float mapDy = dy * distance / scaleToFit;
+
+                            // Apply the offset in map coordinates
+                            finalCanvas.Translate(mapDx, mapDy);
+
+                            // Draw text halo/outline first
+                            finalCanvas.DrawText(name, 0, 0, SKTextAlign.Center, placeLabelFont, placeHaloPaint);
+                            // Draw the label text on top
+                            finalCanvas.DrawText(name, 0, 0, SKTextAlign.Center, placeLabelFont, placeLabelPaint);
+                            finalCanvas.Restore();                            // Add this rectangle to drawn labels
+                            LabelUtilities.AddLabelRect(offsetRect);
+                            placed = true;
+                            break;
+                        }
+                    }
+
+                    if (placed) break;
+                }
+
+                if (!placed && (type == "city" || type == "town"))
+                {
+                    // For cities and towns, draw anyway as they're important
+                    finalCanvas.Save();
+                    finalCanvas.Translate(x, y);
+                    // Draw text halo/outline first
+                    finalCanvas.DrawText(name, 0, 0, SKTextAlign.Center, placeLabelFont, placeHaloPaint);
+                    // Draw the label text on top
+                    finalCanvas.DrawText(name, 0, 0, SKTextAlign.Center, placeLabelFont, placeLabelPaint);
+                    finalCanvas.Restore();                    // Add this rectangle to drawn labels even though it overlaps
+                    LabelUtilities.AddLabelRect(labelRect);
+                }
+            }
+            else
+            {
+                // No overlap, draw normally
+                finalCanvas.Save();
+                finalCanvas.Translate(x, y);
+                // Draw text halo/outline first
+                finalCanvas.DrawText(name, 0, 0, SKTextAlign.Center, placeLabelFont, placeHaloPaint);
+                // Draw the label text on top
+                finalCanvas.DrawText(name, 0, 0, SKTextAlign.Center, placeLabelFont, placeLabelPaint);
+                finalCanvas.Restore();                // Add this rectangle to drawn labels
+                LabelUtilities.AddLabelRect(labelRect);
+            }
         }
 
         // Restore the canvas state
@@ -1056,9 +1174,8 @@ internal class OsmRenderEngine(XmlOsmStreamSource? osmData, BoundingBoxGeo expan
             {
                 // Draw outline first if applicable and wider
                 if (outlinePaint != null && style.OutlineWidth > style.Width)
-                {
                     canvas.DrawPath(roadPath, outlinePaint);
-                }
+
                 // Draw the road fill
                 canvas.DrawPath(roadPath, fillPaint);
             }
@@ -1125,9 +1242,7 @@ internal class OsmRenderEngine(XmlOsmStreamSource? osmData, BoundingBoxGeo expan
                     firstWater = false;
                 }
                 else
-                {
                     path.LineTo(point);
-                }
             }
             path.Close();
 
