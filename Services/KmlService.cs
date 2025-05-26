@@ -3,11 +3,13 @@ using System.Xml;
 using SharpKml.Dom;
 using SharpKml.Engine;
 
-namespace Smapshot.Helpers;
+namespace Smapshot.Services;
 
-internal static class KmlHelper
+internal class KmlService(string kmlFilePath)
 {
-    internal static CoordinateCollection GetPolygonCoordinates(string kmlFilePath)
+    internal CoordinateCollection? Coordinates { get; private set; }
+
+    internal void ParsePolygonCoordinates()
     {
         ArgumentNullException.ThrowIfNull(kmlFilePath, nameof(kmlFilePath));
 
@@ -60,13 +62,15 @@ internal static class KmlHelper
 
         ArgumentNullException.ThrowIfNull(polygon, nameof(polygon));
 
-        return polygon.OuterBoundary.LinearRing.Coordinates;
+        Coordinates = polygon.OuterBoundary.LinearRing.Coordinates;
     }
 
-    internal static double GetOptimalRotationAngle(CoordinateCollection coordinates)
+    internal double GetOptimalRotationAngle()
     {
+        ArgumentNullException.ThrowIfNull(Coordinates, nameof(Coordinates));
+
         // Convert coordinates to Vector2 array for easier processing
-        Vector2[] points = [.. coordinates.Select(c => new Vector2((float)c.Longitude, (float)c.Latitude))];
+        Vector2[] points = [.. Coordinates.Select(c => new Vector2((float)c.Longitude, (float)c.Latitude))];
 
         // Find the convex hull of the points to simplify calculations
         Vector2[] hull = ComputeConvexHull(points);
@@ -90,6 +94,7 @@ internal static class KmlHelper
             (width, height) = (height, width);
         }
 
+        Console.WriteLine($"Polygon rotation angle: {angle:F2}°");
         return angle;
     }
 

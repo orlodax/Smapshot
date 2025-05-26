@@ -38,8 +38,7 @@ public class AppSettings
         FontStyle = "Italic",
         BackgroundColor = "#FFFFFF",
         BackgroundOpacity = 120
-    };
-    public PlaceLabelStyle PlaceLabelStyle { get; set; } = new()
+    }; public PlaceLabelStyle PlaceLabelStyle { get; set; } = new()
     {
         FontSize = 30,
         Color = "#333333",
@@ -47,8 +46,19 @@ public class AppSettings
         BackgroundOpacity = 150,
         FontStyle = "Italic"
     };
+    public RoadLabelStyle RoadLabelStyle { get; set; } = new()
+    {
+        BackgroundColor = "#f1efe9",
+        BackgroundOpacity = 255,
+        OutlineColor = "#999285",
+        OutlineWidth = 1.0f,
+        CornerRadius = 4.0f,
+        PaddingX = 8.0f,
+        PaddingY = 4.0f
+    };
     public float BorderOffset { get; set; } = 10f;
     public string BackgroundColor { get; set; } = "#f1efe9";
+    public float MapContextExtensionCoefficient { get; set; } = 0.5f; // Coefficient for extending the map context bounding box
 }
 
 public class RoadStyle
@@ -102,4 +112,15 @@ public class PlaceLabelStyle
     public string BackgroundColor { get; set; } = "#FFFFFF";
     public int BackgroundOpacity { get; set; } = 150; // 0-255
     public string FontStyle { get; set; } = "Italic"; // Normal, Bold, Italic
+}
+
+public class RoadLabelStyle
+{
+    public string BackgroundColor { get; set; } = "#FFFFFF";
+    public int BackgroundOpacity { get; set; } = 180; // 0-255
+    public string OutlineColor { get; set; } = "#000000";
+    public float OutlineWidth { get; set; } = 1.0f;
+    public float CornerRadius { get; set; } = 4.0f;
+    public float PaddingX { get; set; } = 8.0f; // Horizontal padding
+    public float PaddingY { get; set; } = 4.0f; // Vertical padding
 }

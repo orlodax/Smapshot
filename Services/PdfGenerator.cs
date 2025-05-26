@@ -2,11 +2,11 @@ using QuestPDF.Fluent;
 using QuestPDF.Helpers;
 using QuestPDF.Infrastructure;
 
-namespace Smapshot.Helpers;
+namespace Smapshot.Services;
 
-public static class PdfGenerator
+public class PdfGenerator(string kmlFilePath, byte[] mapImage)
 {
-    public static void Generate(string kmlFilePath, byte[] mapImage)
+    public void Generate()
     {
         // Register QuestPDF license (community edition)
         QuestPDF.Settings.License = LicenseType.Community;

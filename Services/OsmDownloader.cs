@@ -1,11 +1,11 @@
 using OsmSharp.Streams;
 using Smapshot.Models;
 
-namespace Smapshot.Helpers;
+namespace Smapshot.Services;
 
-public static class OsmDataHelper
+internal class OsmDownloader(BoundingBoxGeo boundingBox)
 {
-    public static async Task<XmlOsmStreamSource> DownloadRegion(BoundingBoxGeo boundingBox)
+    public async Task<XmlOsmStreamSource> DownloadRegion()
     {
         string cacheFileName = $"osm_{boundingBox.South:F5}_m{Math.Abs(boundingBox.West):F5}_{boundingBox.North:F5}_m{Math.Abs(boundingBox.East):F5}.osm";
         string cacheDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cache");

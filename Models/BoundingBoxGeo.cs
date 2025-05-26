@@ -2,6 +2,8 @@ namespace Smapshot.Models;
 
 public class BoundingBoxGeo(double north, double south, double east, double west)
 {
+    static readonly AppSettings appSettings = AppSettings.Instance;
+
     public double North { get; set; } = north;
     public double South { get; set; } = south;
     public double East { get; set; } = east;
@@ -9,6 +11,7 @@ public class BoundingBoxGeo(double north, double south, double east, double west
 
     public double Width => East - West;
     public double Height => North - South;
+
 
     public BoundingBoxGeo Pad(double padding)
     {
@@ -26,10 +29,10 @@ public class BoundingBoxGeo(double north, double south, double east, double west
     /// <summary>
     /// Expands the bounding box by a percentage of its width and height, according to which side is larger.
     /// </summary>
-    public BoundingBoxGeo GetExpandedBoundingBox(double basePadding = 1)
+    public BoundingBoxGeo GetExpandedBoundingBox()
     {
         double higherDimension = Math.Max(Width, Height);
-        double padding = basePadding * higherDimension;
+        double padding = appSettings.MapContextExtensionCoefficient * higherDimension;
         return new BoundingBoxGeo(
             North + padding,
             South - padding,

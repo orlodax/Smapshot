@@ -1,6 +1,3 @@
-using System.Text.Json;
-using SharpKml.Dom;
-using Smapshot.Helpers;
 using Smapshot.Models;
 
 namespace Smapshot.Services;
@@ -44,22 +41,12 @@ internal class SmapshotManager
 
     private async Task ProcessKmlFile(string kmlFilePath)
     {
-        CoordinateCollection coordinates;
-        try
-        {
-            coordinates = KmlHelper.GetPolygonCoordinates(kmlFilePath);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error processing KML file {kmlFilePath}: {ex.Message}");
-            return;
-        }
-
-        JobContext jobContext = new(coordinates);
+        JobContext jobContext = new(kmlFilePath);
         jobsInProgress[kmlFilePath] = jobContext;
 
+        jobContext.ParseKmlFile();
         await jobContext.DownloadRegionData();
         jobContext.RenderOsmData();
-        jobContext.ExportMapToPdf(kmlFilePath);
+        jobContext.ExportMapToPdf();
     }
 }
