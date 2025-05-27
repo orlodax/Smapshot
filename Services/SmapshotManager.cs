@@ -1,12 +1,11 @@
+using OsmSharp.Streams;
 using Smapshot.Models;
 
 namespace Smapshot.Services;
 
 internal class SmapshotManager
 {
-    readonly Dictionary<string, JobContext> jobsInProgress = [];
-
-    internal void StartJob(string inputPath)
+    static internal void StartJobs(string inputPath)
     {
         IEnumerable<string> kmlFilePaths = [];
 
@@ -32,21 +31,53 @@ internal class SmapshotManager
 
         List<Task> tasks = [];
         foreach (var kmlFilePath in kmlFilePaths)
-            tasks.Add(Task.Run(async () => await ProcessKmlFile(kmlFilePath)));
+            tasks.Add(Task.Run(async () => await StartJob(kmlFilePath)));
 
         Task.WaitAll(tasks);
         Console.WriteLine("All jobs completed.");
     }
 
-
-    private async Task ProcessKmlFile(string kmlFilePath)
+    static async Task StartJob(string kmlFilePath)
     {
-        JobContext jobContext = new(kmlFilePath);
-        jobsInProgress[kmlFilePath] = jobContext;
+        ArgumentNullException.ThrowIfNull(kmlFilePath, nameof(kmlFilePath));
+        KmlService kmlService = new(kmlFilePath);
 
-        jobContext.ParseKmlFile();
-        await jobContext.DownloadRegionData();
-        jobContext.RenderOsmData();
-        jobContext.ExportMapToPdf();
+        // Parse the KML file to extract coordinates
+        try
+        {
+            kmlService.ParsePolygonCoordinates();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error processing KML file {kmlFilePath}: {ex.Message}");
+            throw;
+        }
+
+        if (kmlService.Coordinates == null || kmlService.Coordinates.Count == 0)
+        {
+            Console.WriteLine("No coordinates found in the KML file.");
+            throw new ArgumentException("The KML file does not contain valid coordinates.", nameof(kmlFilePath));
+        }
+
+        BoundingBoxGeo boundingBox = new(
+            north: kmlService.Coordinates.Max(c => c.Latitude),
+            south: kmlService.Coordinates.Min(c => c.Latitude),
+            east: kmlService.Coordinates.Max(c => c.Longitude),
+            west: kmlService.Coordinates.Min(c => c.Longitude)
+        );
+
+        // Download OSM data for the bounding box
+        OsmDownloader osmDownloader = new(boundingBox.GetExpandedBoundingBox());
+        XmlOsmStreamSource osmData = await osmDownloader.DownloadRegion();
+
+        // Render the OSM data
+        OsmRenderEngine osmRenderEngine = new(osmData, boundingBox.GetExpandedBoundingBox(), kmlService);
+        byte[] fullMapImage = osmRenderEngine.RenderOsmData();
+
+        // Export the map to PDF
+        PdfGenerator pdfGenerator = new(kmlFilePath, fullMapImage);
+        pdfGenerator.Generate();
+
+        Console.WriteLine($"OSM full map rendering completed for {kmlFilePath}");
     }
 }

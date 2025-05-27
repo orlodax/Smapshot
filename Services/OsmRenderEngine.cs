@@ -53,10 +53,7 @@ internal class OsmRenderEngine(XmlOsmStreamSource? osmData, BoundingBoxGeo expan
         lonCorrection = Math.Cos((minLat + maxLat) / 2.0 * Math.PI / 180.0);
 
         scale = GetPolygonScale();
-        Console.WriteLine($"Polygon scale: {scale:F2}");
-
         float scaleToFit = GetScaleToFit(polygonCoordinates, out float polyCenterX, out float polyCenterY); // MODIFIED
-        Console.WriteLine($"Scale to fit: {scaleToFit:F2}");
 
         GetExpandedMapSize(out int width, out int height);
 
@@ -217,7 +214,6 @@ internal class OsmRenderEngine(XmlOsmStreamSource? osmData, BoundingBoxGeo expan
 
         width = (int)Math.Ceiling(correctedLonDiff * scale);
         height = (int)Math.Ceiling(latDiff * scale);
-        Console.WriteLine($"Map dimensions: {width}x{height}");
     }
 
     float GetScaleToFit(CoordinateCollection polygonCoordinates, out float polyCenterX, out float polyCenterY)
@@ -562,10 +558,15 @@ internal class OsmRenderEngine(XmlOsmStreamSource? osmData, BoundingBoxGeo expan
             var roadRef = mostImportantRoad.roadRef;            // Format the label text according to what data we have
             string labelText;
             bool isRefOnly = false;
-
             if (!string.IsNullOrEmpty(labelKey) && !string.IsNullOrEmpty(roadRef))
             {
-                if (labelKey == roadRef)
+                // Special case for roads with ref starting with 'N' followed by numbers (national roads)
+                if (roadRef.StartsWith('N') && roadRef.Length > 1 && char.IsDigit(roadRef[1]))
+                {
+                    labelText = roadRef;
+                    isRefOnly = true;
+                }
+                else if (labelKey == roadRef)
                 {
                     // If name is null and we're using ref as the key
                     labelText = roadRef;
@@ -586,6 +587,7 @@ internal class OsmRenderEngine(XmlOsmStreamSource? osmData, BoundingBoxGeo expan
                 if (!string.IsNullOrEmpty(roadRef) && (string.IsNullOrEmpty(labelKey) || labelKey == roadRef))
                     isRefOnly = true;
             }
+
             // Skip extremely short roads, but be more lenient for important road types
             float lengthThreshold = 30f; // Base threshold
 
@@ -706,7 +708,6 @@ internal class OsmRenderEngine(XmlOsmStreamSource? osmData, BoundingBoxGeo expan
 
             // Apply padding from style settings
             bgRect.Inflate(appSettings.RoadLabelStyle.PaddingX, appSettings.RoadLabelStyle.PaddingY);
-
             // Draw rounded rectangle background with outline
             float cornerRadius = appSettings.RoadLabelStyle.CornerRadius;
             finalCanvas.DrawRoundRect(bgRect, cornerRadius, cornerRadius, roadBgPaint);

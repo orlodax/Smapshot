@@ -5,4 +5,4 @@
 
 using System.Diagnostics.CodeAnalysis;
 
-[assembly: SuppressMessage("Performance", "CA1869:Cache and reuse 'JsonSerializerOptions' instances", Justification = "Single use instance in case of corrupted deserialization.", Scope = "member", Target = "~M:Smapshot.Program.LoadAppSettings")]
+[assembly: SuppressMessage("Performance", "CA1869:Cache and reuse 'JsonSerializerOptions' instances", Justification = "Single use instance in case of corrupted deserialization.", Scope = "member", Target = "~M:Smapshot.Program.Main(System.String[])")]

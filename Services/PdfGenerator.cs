@@ -47,7 +47,5 @@ public class PdfGenerator(string kmlFilePath, byte[] mapImage)
             });
         })
         .GeneratePdf(outputPdfPath);
-
-        Console.WriteLine($"Successfully created PDF at: {outputPdfPath}");
     }
 }

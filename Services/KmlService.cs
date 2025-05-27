@@ -94,7 +94,6 @@ internal class KmlService(string kmlFilePath)
             (width, height) = (height, width);
         }
 
-        Console.WriteLine($"Polygon rotation angle: {angle:F2}°");
         return angle;
     }
 

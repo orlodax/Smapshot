@@ -6,8 +6,6 @@ namespace Smapshot;
 
 public static partial class Program
 {
-    public static AppSettings AppSettings { get; private set; } = new();
-
     public static void Main(string[] args)
     {
         if (args is null || args.Length == 0)
@@ -16,14 +14,7 @@ public static partial class Program
             return;
         }
 
-        LoadAppSettings();
-
-        new SmapshotManager()
-            .StartJob(args[0]);
-    }
-
-    static void LoadAppSettings()
-    {
+        // Load app settings from JSON file
         try
         {
             string json = File.ReadAllText("appSettings.json");
@@ -42,9 +33,12 @@ public static partial class Program
         catch
         {
             Console.WriteLine("Error reading appSettings.json. Using default settings.");
-            AppSettings = new AppSettings();
+            AppSettings appSettings = new();
             using FileStream fs = File.Create("appSettings.json");
-            JsonSerializer.Serialize(fs, AppSettings, new JsonSerializerOptions { WriteIndented = true });
+            JsonSerializer.Serialize(fs, appSettings, new JsonSerializerOptions { WriteIndented = true });
         }
+
+        // Start the jobs with the provided KML file(s)
+        SmapshotManager.StartJobs(args[0]);
     }
 }
