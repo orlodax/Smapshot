@@ -75,58 +75,130 @@ internal class KmlService(string kmlFilePath)
         // Find the convex hull of the points to simplify calculations
         Vector2[] hull = ComputeConvexHull(points);
 
-        // Calculate the minimum area bounding rectangle
-        (double angle, double width, double height) = CalculateMinAreaBoundingRectangle(hull);
+        Console.WriteLine($"Debug: Hull has {hull.Length} points from {points.Length} original points");
 
         double targetRatio = 2500.0 / 3250.0; // Target aspect ratio (portrait)
 
-        // Decide if we need to rotate by 90 degrees
-        double currentRatio = width / height;
-        double currentRatioInverse = height / width;
+        // Only treat as line-like if we have very few original points AND hull reduces to 2
+        bool isLineLike = hull.Length <= 2 && points.Length < 100;
 
-        // Check which orientation (original or 90-degree rotated) better matches our target ratio
-        bool shouldRotate90 = Math.Abs(currentRatioInverse - targetRatio) < Math.Abs(currentRatio - targetRatio);
-
-        // Adjust angle if needed
-        if (shouldRotate90)
+        if (isLineLike)
         {
-            angle += 90;
-            (width, height) = (height, width);
-        }
+            Console.WriteLine("Debug: Detected line-like polygon, calculating orientation from endpoints");
 
-        return angle;
+            // For a line, calculate the angle from the first to last point
+            Vector2 start = points[0];
+            Vector2 end = points[^1];
+            Vector2 lineDirection = end - start;
+
+            double lineAngle = Math.Atan2(lineDirection.Y, lineDirection.X) * (180.0 / Math.PI);
+
+            // For portrait orientation, we want the line to be more vertical than horizontal
+            // Convert angle to 0-180 range for easier logic
+            double absAngle = Math.Abs(lineAngle);
+            if (absAngle > 90) absAngle = 180 - absAngle;
+
+            // If the line is more horizontal (0-45°), rotate it to be vertical
+            bool isCurrentlyHorizontal = (absAngle < 45);
+
+            if (isCurrentlyHorizontal)
+            {
+                lineAngle += 90;
+            }
+
+            Console.WriteLine($"Debug: Line angle={lineAngle}, absAngle={absAngle}, was horizontal={isCurrentlyHorizontal}, returning rotation angle");
+            return lineAngle;
+        }
+        else
+        {
+            // Force use original points if hull is too simplified
+            if (hull.Length <= 2)
+            {
+                Console.WriteLine("Debug: Hull over-simplified, using bounding box of original points");
+                hull = points;
+            }
+
+            // Calculate the minimum area bounding rectangle
+            (double angle, double width, double height) = CalculateMinAreaBoundingRectangle(hull);
+
+            // Add debugging to understand what's happening
+            Console.WriteLine($"Debug: width={width}, height={height}, angle={angle}");
+
+            // Handle edge cases
+            if (width <= 0 || height <= 0)
+            {
+                Console.WriteLine("Warning: Invalid width or height dimensions");
+                return angle; // Return the original angle without rotation
+            }
+
+            // Calculate ratios safely
+            double currentRatio = width / height;
+            double currentRatioInverse = height / width;
+
+            Console.WriteLine($"Debug: currentRatio={currentRatio}, currentRatioInverse={currentRatioInverse}, targetRatio={targetRatio}");
+
+            // Check which orientation (original or 90-degree rotated) better matches our target ratio
+            bool shouldRotate90 = Math.Abs(currentRatioInverse - targetRatio) < Math.Abs(currentRatio - targetRatio);
+
+            Console.WriteLine($"Debug: shouldRotate90={shouldRotate90}");
+
+            // Adjust angle if needed
+            if (shouldRotate90)
+            {
+                angle += 90;
+                (width, height) = (height, width);
+            }
+
+            return angle;
+        }
     }
 
     static Vector2[] ComputeConvexHull(Vector2[] points)
     {
-        if (points.Length <= 3) return points;
+        Console.WriteLine($"Debug: Input points count: {points.Length}");
 
-        // Implementation of the Graham scan algorithm for convex hull
+        // Add debugging for the first few points
+        for (int k = 0; k < Math.Min(points.Length, 5); k++)
+        {
+            Console.WriteLine($"Debug: Point {k}: ({points[k].X:F6}, {points[k].Y:F6})");
+        }
+
+        if (points.Length <= 3)
+        {
+            Console.WriteLine("Debug: Returning original points (3 or fewer)");
+            return points;
+        }
+
+        // Make a copy to avoid modifying the original array
+        Vector2[] workingPoints = new Vector2[points.Length];
+        Array.Copy(points, workingPoints, points.Length);
 
         // Find the point with the lowest y-coordinate (and leftmost if tied)
         int lowestIndex = 0;
-        for (int i = 1; i < points.Length; i++)
+        for (int i = 1; i < workingPoints.Length; i++)
         {
-            if (points[i].Y < points[lowestIndex].Y ||
-                (points[i].Y == points[lowestIndex].Y && points[i].X < points[lowestIndex].X))
+            if (workingPoints[i].Y < workingPoints[lowestIndex].Y ||
+                (workingPoints[i].Y == workingPoints[lowestIndex].Y && workingPoints[i].X < workingPoints[lowestIndex].X))
             {
                 lowestIndex = i;
             }
         }
 
+        Console.WriteLine($"Debug: Lowest point index: {lowestIndex}, point: ({workingPoints[lowestIndex].X:F6}, {workingPoints[lowestIndex].Y:F6})");
+
         // Swap the lowest point to the first position
-        (points[0], points[lowestIndex]) = (points[lowestIndex], points[0]);
+        (workingPoints[0], workingPoints[lowestIndex]) = (workingPoints[lowestIndex], workingPoints[0]);
 
         // Sort points based on polar angle with respect to the lowest point
-        Vector2 pivot = points[0];
-        Array.Sort(points, 1, points.Length - 1, new PolarAngleComparer(pivot));
+        Vector2 pivot = workingPoints[0];
+        Array.Sort(workingPoints, 1, workingPoints.Length - 1, new PolarAngleComparer(pivot));
 
         // Build convex hull
         var hull = new Stack<Vector2>();
-        hull.Push(points[0]);
-        hull.Push(points[1]);
+        hull.Push(workingPoints[0]);
+        hull.Push(workingPoints[1]);
 
-        for (int i = 2; i < points.Length; i++)
+        for (int i = 2; i < workingPoints.Length; i++)
         {
             while (hull.Count > 1)
             {
@@ -135,7 +207,7 @@ internal class KmlService(string kmlFilePath)
                 hull.Push(p2);
 
                 // Check if we make a non-left turn
-                if (Cross(p1, p2, points[i]) >= 0)
+                if (Cross(p1, p2, workingPoints[i]) >= 0)
                 {
                     hull.Pop(); // Remove p2
                 }
@@ -145,10 +217,13 @@ internal class KmlService(string kmlFilePath)
                 }
             }
 
-            hull.Push(points[i]);
+            hull.Push(workingPoints[i]);
         }
 
-        return [.. hull.Reverse()];
+        Vector2[] result = [.. hull.Reverse()];
+        Console.WriteLine($"Debug: Convex hull result count: {result.Length}");
+
+        return result;
     }
 
     static float Cross(Vector2 o, Vector2 a, Vector2 b)

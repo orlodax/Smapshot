@@ -15,7 +15,7 @@ internal class OsmRenderEngine(XmlOsmStreamSource? osmData, BoundingBoxGeo expan
 {
     const int targetWidth = 2500;
     const int targetHeight = 3250;
-    const double margin = 0.1; // 10% margin around polygon (0.0 = no margin, 0.1 = 10% margin)
+    const double margin = 0.2;  // percentage of target size to leave as margin around the polygon
 
     static readonly AppSettings appSettings = AppSettings.Instance;
 
@@ -653,10 +653,12 @@ internal class OsmRenderEngine(XmlOsmStreamSource? osmData, BoundingBoxGeo expan
             // Draw the label centered at the middle segment
             SKPoint middlePoint = new((p1.X + p2.X) / 2, (p1.Y + p2.Y) / 2); finalCanvas.Save();
             finalCanvas.Translate(middlePoint.X, middlePoint.Y);
-            finalCanvas.RotateDegrees(angle);            // Create a properly centered background rectangle
+            finalCanvas.RotateDegrees(angle);
+            // Counter-rotate the text to keep it horizontally oriented on the physical page
+            finalCanvas.RotateDegrees(-(float)rotationAngle);            // Create a properly centered background rectangle
             // Text will be centered at (0,0) in the translated/rotated coordinates
             float textHeight = textBounds.Height;
-            float textWidth = textBounds.Width;            // Calculate the position of this label in final canvas coordinates
+            float textWidth = textBounds.Width;// Calculate the position of this label in final canvas coordinates
             // for collision detection
             float centerX = targetWidth / 2f;
             float centerY = targetHeight / 2f;
@@ -824,13 +826,13 @@ internal class OsmRenderEngine(XmlOsmStreamSource? osmData, BoundingBoxGeo expan
                     appSettings.WaterLabelStyle.FontStyle == "Bold" ? SKFontStyle.Bold :
                     appSettings.WaterLabelStyle.FontStyle == "Italic" ? SKFontStyle.Italic :
                     SKFontStyle.Normal)
-            };
-
-            // Measure the text to create a bounding box
+            };            // Measure the text to create a bounding box
             waterLabelFont.MeasureText(name, out SKRect textBounds, waterLabelPaint);
 
             finalCanvas.Save();
             finalCanvas.Translate(center.X, center.Y);
+            // Counter-rotate the text to keep it horizontally oriented
+            finalCanvas.RotateDegrees(-(float)rotationAngle);
 
             finalCanvas.DrawText(name, 0, 0, SKTextAlign.Center, waterLabelFont, waterLabelPaint);
 
@@ -1015,10 +1017,10 @@ internal class OsmRenderEngine(XmlOsmStreamSource? osmData, BoundingBoxGeo expan
                             // Calculate the offset in the map coordinate system
                             // Transform the offset back to map coordinates
                             float mapDx = dx * distance / scaleToFit;
-                            float mapDy = dy * distance / scaleToFit;
-
-                            // Apply the offset in map coordinates
+                            float mapDy = dy * distance / scaleToFit;                            // Apply the offset in map coordinates
                             finalCanvas.Translate(mapDx, mapDy);
+                            // Counter-rotate the text to keep it horizontally oriented
+                            finalCanvas.RotateDegrees(-(float)rotationAngle);
 
                             // Draw text halo/outline first
                             finalCanvas.DrawText(name, 0, 0, SKTextAlign.Center, placeLabelFont, placeHaloPaint);
@@ -1035,10 +1037,11 @@ internal class OsmRenderEngine(XmlOsmStreamSource? osmData, BoundingBoxGeo expan
                 }
 
                 if (!placed && (type == "city" || type == "town"))
-                {
-                    // For cities and towns, draw anyway as they're important
+                {                    // For cities and towns, draw anyway as they're important
                     finalCanvas.Save();
                     finalCanvas.Translate(x, y);
+                    // Counter-rotate the text to keep it horizontally oriented
+                    finalCanvas.RotateDegrees(-(float)rotationAngle);
                     // Draw text halo/outline first
                     finalCanvas.DrawText(name, 0, 0, SKTextAlign.Center, placeLabelFont, placeHaloPaint);
                     // Draw the label text on top
@@ -1048,10 +1051,11 @@ internal class OsmRenderEngine(XmlOsmStreamSource? osmData, BoundingBoxGeo expan
                 }
             }
             else
-            {
-                // No overlap, draw normally
+            {                // No overlap, draw normally
                 finalCanvas.Save();
                 finalCanvas.Translate(x, y);
+                // Counter-rotate the text to keep it horizontally oriented
+                finalCanvas.RotateDegrees(-(float)rotationAngle);
                 // Draw text halo/outline first
                 finalCanvas.DrawText(name, 0, 0, SKTextAlign.Center, placeLabelFont, placeHaloPaint);
                 // Draw the label text on top
