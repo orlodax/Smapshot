@@ -978,7 +978,7 @@ internal class OsmRenderEngine(XmlOsmStreamSource? osmData, BoundingBoxGeo expan
                 bool placed = false;
 
                 // Try positions in 8 directions around the point
-                float[] offsets = { 1.0f, 1.5f, 2.0f };  // Multipliers for text height
+                float[] offsets = [1.0f, 1.5f, 2.0f];  // Multipliers for text height
 
                 foreach (float offsetFactor in offsets)
                 {
@@ -990,10 +990,10 @@ internal class OsmRenderEngine(XmlOsmStreamSource? osmData, BoundingBoxGeo expan
 
                     // Try 8 positions around the point
                     (float dx, float dy)[] directions =
-                    {
+                    [
                         (0, -1), (1, -1), (1, 0), (1, 1),  // top, top-right, right, bottom-right
                         (0, 1), (-1, 1), (-1, 0), (-1, -1)  // bottom, bottom-left, left, top-left
-                    };
+                    ];
 
                     float distance = textBounds.Height * offsetFactor;
 
@@ -1125,9 +1125,9 @@ internal class OsmRenderEngine(XmlOsmStreamSource? osmData, BoundingBoxGeo expan
         // Group roads by style key
         var roadsByStyle = new Dictionary<string, List<(List<long> nodeIds, RoadStyle style)>>();
 
-        foreach (var road in sortedRoads)
+        foreach (var (nodeIds, highway, name, roadRef) in sortedRoads)
         {
-            RoadStyle style = appSettings.RoadStyles.TryGetValue(road.highway, out RoadStyle? value) ? value : appSettings.RoadStyles["default"];
+            RoadStyle style = appSettings.RoadStyles.TryGetValue(highway, out RoadStyle? value) ? value : appSettings.RoadStyles["default"];
             // Construct style key for grouping and paint caching
             // Key is now based only on visual style properties, not the highway type itself.
             string styleKey = $"oc:{style.OutlineColor}_ow:{style.OutlineWidth}_fc:{style.Color}_fw:{style.Width}";
@@ -1137,7 +1137,7 @@ internal class OsmRenderEngine(XmlOsmStreamSource? osmData, BoundingBoxGeo expan
                 roadList = [];
                 roadsByStyle[styleKey] = roadList;
             }
-            roadList.Add((road.nodeIds, style));
+            roadList.Add((nodeIds, style));
         }
 
         foreach (var styleGroupEntry in roadsByStyle)

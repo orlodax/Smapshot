@@ -5,6 +5,7 @@
 
 apikey.txt
 
+input/
 .vscode/
 *.osm
 *.pdf

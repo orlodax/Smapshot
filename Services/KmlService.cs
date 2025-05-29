@@ -75,8 +75,6 @@ internal class KmlService(string kmlFilePath)
         // Find the convex hull of the points to simplify calculations
         Vector2[] hull = ComputeConvexHull(points);
 
-        Console.WriteLine($"Debug: Hull has {hull.Length} points from {points.Length} original points");
-
         double targetRatio = 2500.0 / 3250.0; // Target aspect ratio (portrait)
 
         // Only treat as line-like if we have very few original points AND hull reduces to 2
@@ -84,8 +82,6 @@ internal class KmlService(string kmlFilePath)
 
         if (isLineLike)
         {
-            Console.WriteLine("Debug: Detected line-like polygon, calculating orientation from endpoints");
-
             // For a line, calculate the angle from the first to last point
             Vector2 start = points[0];
             Vector2 end = points[^1];
@@ -106,7 +102,6 @@ internal class KmlService(string kmlFilePath)
                 lineAngle += 90;
             }
 
-            Console.WriteLine($"Debug: Line angle={lineAngle}, absAngle={absAngle}, was horizontal={isCurrentlyHorizontal}, returning rotation angle");
             return lineAngle;
         }
         else
@@ -114,15 +109,11 @@ internal class KmlService(string kmlFilePath)
             // Force use original points if hull is too simplified
             if (hull.Length <= 2)
             {
-                Console.WriteLine("Debug: Hull over-simplified, using bounding box of original points");
                 hull = points;
             }
 
             // Calculate the minimum area bounding rectangle
             (double angle, double width, double height) = CalculateMinAreaBoundingRectangle(hull);
-
-            // Add debugging to understand what's happening
-            Console.WriteLine($"Debug: width={width}, height={height}, angle={angle}");
 
             // Handle edge cases
             if (width <= 0 || height <= 0)
@@ -135,12 +126,8 @@ internal class KmlService(string kmlFilePath)
             double currentRatio = width / height;
             double currentRatioInverse = height / width;
 
-            Console.WriteLine($"Debug: currentRatio={currentRatio}, currentRatioInverse={currentRatioInverse}, targetRatio={targetRatio}");
-
             // Check which orientation (original or 90-degree rotated) better matches our target ratio
             bool shouldRotate90 = Math.Abs(currentRatioInverse - targetRatio) < Math.Abs(currentRatio - targetRatio);
-
-            Console.WriteLine($"Debug: shouldRotate90={shouldRotate90}");
 
             // Adjust angle if needed
             if (shouldRotate90)
@@ -155,17 +142,8 @@ internal class KmlService(string kmlFilePath)
 
     static Vector2[] ComputeConvexHull(Vector2[] points)
     {
-        Console.WriteLine($"Debug: Input points count: {points.Length}");
-
-        // Add debugging for the first few points
-        for (int k = 0; k < Math.Min(points.Length, 5); k++)
-        {
-            Console.WriteLine($"Debug: Point {k}: ({points[k].X:F6}, {points[k].Y:F6})");
-        }
-
         if (points.Length <= 3)
         {
-            Console.WriteLine("Debug: Returning original points (3 or fewer)");
             return points;
         }
 
@@ -183,8 +161,6 @@ internal class KmlService(string kmlFilePath)
                 lowestIndex = i;
             }
         }
-
-        Console.WriteLine($"Debug: Lowest point index: {lowestIndex}, point: ({workingPoints[lowestIndex].X:F6}, {workingPoints[lowestIndex].Y:F6})");
 
         // Swap the lowest point to the first position
         (workingPoints[0], workingPoints[lowestIndex]) = (workingPoints[lowestIndex], workingPoints[0]);
@@ -221,7 +197,6 @@ internal class KmlService(string kmlFilePath)
         }
 
         Vector2[] result = [.. hull.Reverse()];
-        Console.WriteLine($"Debug: Convex hull result count: {result.Length}");
 
         return result;
     }
